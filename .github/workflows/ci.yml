@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore RomForge.slnx
+
+      - name: Build
+        run: dotnet build RomForge.slnx --no-restore --configuration Release -warnaserror
+
+      - name: Test with coverage
+        run: dotnet test RomForge.slnx --no-build --configuration Release --collect:"XPlat Code Coverage" --settings coverage.runsettings --results-directory artifacts/coverage
+
+      - name: Check coverage threshold
+        run: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            "-reports:artifacts/coverage/**/coverage.cobertura.xml" \
+            "-targetdir:artifacts/coverage/merged" \
+            "-reporttypes:Cobertura" \
+            "-assemblyfilters:+RomForge.Core;-RomForge.UI"
+          python3 << 'EOF'
+          import xml.etree.ElementTree as ET, sys
+          root = ET.parse('artifacts/coverage/merged/Cobertura.xml').getroot()
+          pct = float(root.get('line-rate', 0)) * 100
+          print(f'Line coverage: {pct:.1f}%')
+          if pct < 60:
+              print(f'FAIL: {pct:.1f}% is below the 60% minimum threshold')
+              sys.exit(1)
+          EOF
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: artifacts/coverage/
+          if-no-files-found: warn

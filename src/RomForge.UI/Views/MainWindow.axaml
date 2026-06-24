@@ -1,0 +1,293 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RomForge.UI.ViewModels"
+        xmlns:converters="using:RomForge.UI.Converters"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="RomForge.UI.Views.MainWindow"
+        x:DataType="vm:MainWindowVM"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="RomForge"
+        Width="1200" Height="700"
+        MinWidth="800" MinHeight="500">
+
+    <Window.Styles>
+        <Style Selector="Button.col-header">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style Selector="Button.col-header /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Button.col-header:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#18808080"/>
+        </Style>
+    </Window.Styles>
+
+    <Window.Resources>
+        <converters:MatchStatusToBrushConverter x:Key="StatusToBrush"/>
+    </Window.Resources>
+
+    <Design.DataContext>
+        <vm:MainWindowVM/>
+    </Design.DataContext>
+
+    <DockPanel>
+
+        <!-- Toolbar -->
+        <Border DockPanel.Dock="Top"
+                BorderThickness="0,0,0,1"
+                Padding="6,4">
+            <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button Command="{Binding ImportDatCommand}" Content="Import DAT…"/>
+                <Button Command="{Binding RemoveDatCommand}" Content="Remove DAT"/>
+                <Button Command="{Binding CheckDatUpdateCommand}" Content="Check for Update"/>
+                <Separator Width="1" Height="18" Margin="4,0"/>
+                <ComboBox ItemsSource="{Binding LoadedDats}"
+                          SelectedItem="{Binding ActiveDat, Mode=TwoWay}"
+                          MinWidth="200"
+                          MaxWidth="320"
+                          IsVisible="{Binding IsDatLoaded}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:LoadedDatVM">
+                            <TextBlock Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis"/>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Separator Width="1" Height="18" Margin="4,0" IsVisible="{Binding IsDatLoaded}"/>
+                <Button Command="{Binding ScanFolderCommand}" Content="Scan Folder…"/>
+                <Button Command="{Binding RenameSelectedCommand}" Content="Rename"/>
+                <Button Command="{Binding RenameAllCommand}" Content="Rename All"/>
+                <Separator Width="1" Height="18" Margin="4,0" IsVisible="{Binding IsDatLoaded}"/>
+                <TextBlock Text="Format:" VerticalAlignment="Center" Opacity="0.7" IsVisible="{Binding IsDatLoaded}"/>
+                <ComboBox ItemsSource="{Binding ArchiveFormats}"
+                          SelectedItem="{Binding ArchiveFormat, Mode=TwoWay}"
+                          MinWidth="70"
+                          IsVisible="{Binding IsDatLoaded}"/>
+                <Button Command="{Binding ReArchiveSelectedCommand}" Content="{Binding ReArchiveButtonLabel}"/>
+                <Button Command="{Binding ReArchiveAllCommand}" Content="{Binding ReArchiveAllButtonLabel}"/>
+                <Separator Width="1" Height="18" Margin="4,0" IsVisible="{Binding IsDatLoaded}"/>
+                <Button Command="{Binding TrimSelectedCommand}" Content="Trim"/>
+                <Button Command="{Binding TrimAllCommand}" Content="Trim All"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Status bar -->
+        <Border DockPanel.Dock="Bottom"
+                BorderThickness="0,1,0,0"
+                Padding="8,3">
+            <TextBlock Text="{Binding StatusSummary}" FontSize="12"/>
+        </Border>
+
+        <!-- Main body: full-width content area -->
+        <Grid>
+
+                <!-- Placeholder shown when no DAT is active -->
+                <TextBlock Text="Open a DAT file to get started."
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Opacity="0.4"
+                           IsVisible="{Binding IsDatLoaded, Converter={x:Static BoolConverters.Not}}"/>
+
+                <!-- Game list and detail pane, shown when a DAT is active -->
+                <Grid IsVisible="{Binding IsDatLoaded}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" MinWidth="300"/>
+                        <ColumnDefinition Width="4"/>
+                        <ColumnDefinition Width="*" MinWidth="220"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Game list -->
+                    <DockPanel Grid.Column="0">
+
+                        <!-- Filter bar -->
+                        <Border DockPanel.Dock="Top"
+                                BorderThickness="0,0,0,1"
+                                Padding="6,4">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox Grid.Column="0"
+                                         PlaceholderText="Search titles…"
+                                         Text="{Binding ActiveDat.TitleFilter, Mode=TwoWay}"
+                                         Margin="0,0,8,0"/>
+                                <StackPanel Grid.Column="1"
+                                            Orientation="Horizontal"
+                                            Spacing="12"
+                                            VerticalAlignment="Center">
+                                    <CheckBox Content="Verified"
+                                              IsChecked="{Binding ActiveDat.ShowVerified}"/>
+                                    <CheckBox Content="Missing"
+                                              IsChecked="{Binding ActiveDat.ShowMissing}"/>
+                                    <CheckBox Content="Incorrectly Named"
+                                              IsChecked="{Binding ActiveDat.ShowIncorrectlyNamed}"/>
+                                    <CheckBox Content="Wrong Archive"
+                                              IsChecked="{Binding ActiveDat.ShowWrongArchiveType}"/>
+                                    <CheckBox Content="Untrimmed"
+                                              IsChecked="{Binding ActiveDat.ShowUntrimmed}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Column headers -->
+                        <Border DockPanel.Dock="Top"
+                                BorderThickness="0,0,0,1"
+                                Padding="4,3">
+                            <Grid ColumnDefinitions="60,*,150,140">
+                                <Button Grid.Column="0"
+                                        Classes="col-header"
+                                        Command="{Binding ActiveDat.SortByCommand}"
+                                        CommandParameter="ReleaseNumber">
+                                    <StackPanel Orientation="Horizontal" Spacing="2">
+                                        <TextBlock Text="#" FontWeight="SemiBold" Opacity="0.7" FontSize="12"/>
+                                        <TextBlock Text="{Binding ActiveDat.ReleaseNumberSortIndicator}" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Grid.Column="1"
+                                        Classes="col-header"
+                                        Command="{Binding ActiveDat.SortByCommand}"
+                                        CommandParameter="Title">
+                                    <StackPanel Orientation="Horizontal" Spacing="2">
+                                        <TextBlock Text="Title" FontWeight="SemiBold" Opacity="0.7" FontSize="12"/>
+                                        <TextBlock Text="{Binding ActiveDat.TitleSortIndicator}" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Grid.Column="2"
+                                        Classes="col-header"
+                                        Command="{Binding ActiveDat.SortByCommand}"
+                                        CommandParameter="Publisher">
+                                    <StackPanel Orientation="Horizontal" Spacing="2">
+                                        <TextBlock Text="Publisher" FontWeight="SemiBold" Opacity="0.7" FontSize="12"/>
+                                        <TextBlock Text="{Binding ActiveDat.PublisherSortIndicator}" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Grid.Column="3"
+                                        Classes="col-header"
+                                        Command="{Binding ActiveDat.SortByCommand}"
+                                        CommandParameter="Status">
+                                    <StackPanel Orientation="Horizontal" Spacing="2">
+                                        <TextBlock Text="Status" FontWeight="SemiBold" Opacity="0.7" FontSize="12"/>
+                                        <TextBlock Text="{Binding ActiveDat.StatusSortIndicator}" FontSize="12" Opacity="0.7"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Rows -->
+                        <ListBox ItemsSource="{Binding ActiveDat.FilteredGames}"
+                                 SelectedItem="{Binding SelectedGame}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:GameRowVM">
+                                    <Grid ColumnDefinitions="60,*,150,140" Margin="0,1">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding ReleaseNumber}"
+                                                   Opacity="0.6"
+                                                   FontSize="12"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Title}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding Publisher}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Opacity="0.8"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding StatusText}"
+                                                   Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}"
+                                                   FontSize="12"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Column="1"
+                                  HorizontalAlignment="Stretch"
+                                  ResizeBehavior="PreviousAndNext"/>
+
+                    <!-- Detail pane -->
+                    <ContentControl Grid.Column="2" Content="{Binding SelectedGame}">
+                        <ContentControl.ContentTemplate>
+                            <DataTemplate x:DataType="vm:GameRowVM">
+                                <ScrollViewer>
+                                    <StackPanel Margin="12" Spacing="4">
+                                        <TextBlock Text="{Binding Title}"
+                                                   FontWeight="Bold"
+                                                   FontSize="14"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4"/>
+
+                                        <!-- Screenshots — hidden until images are loaded from disk -->
+                                        <StackPanel Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    Margin="0,0,0,4"
+                                                    IsVisible="{Binding Im1Bitmap, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <Image Source="{Binding Im1Bitmap}"
+                                                   Width="{Binding ScreenshotsWidth}"
+                                                   Height="{Binding ScreenshotsHeight}"
+                                                   Stretch="Uniform"/>
+                                            <Image Source="{Binding Im2Bitmap}"
+                                                   Width="{Binding ScreenshotsWidth}"
+                                                   Height="{Binding ScreenshotsHeight}"
+                                                   Stretch="Uniform"
+                                                   IsVisible="{Binding Im2Bitmap, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                        </StackPanel>
+
+                                        <Separator Margin="0,0,0,4"/>
+                                        <Grid ColumnDefinitions="90,*"
+                                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                                              RowSpacing="6">
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Release #:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ReleaseNumber}"/>
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Publisher:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Publisher}"/>
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Status:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="2" Grid.Column="1"
+                                                       Text="{Binding StatusText}"
+                                                       Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}"/>
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Location:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Location}"/>
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Language:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Language}"/>
+
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Save Type:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SaveType}"/>
+
+                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="ROM Size:" Opacity="0.6"/>
+                                            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding RomSize}"/>
+
+                                            <TextBlock Grid.Row="7" Grid.Column="0" Text="Expected:" Opacity="0.6"
+                                                       IsVisible="{Binding ExpectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                            <TextBlock Grid.Row="7" Grid.Column="1"
+                                                       Text="{Binding ExpectedFileName}"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="11"
+                                                       IsVisible="{Binding ExpectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                        </Grid>
+                                        <Separator Margin="0,8"/>
+                                        <TextBlock Text="File:" Opacity="0.6"/>
+                                        <TextBlock Text="{Binding FilePath}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="11"/>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </DataTemplate>
+                        </ContentControl.ContentTemplate>
+                    </ContentControl>
+
+                </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

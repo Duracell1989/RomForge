@@ -1,0 +1,221 @@
+using System.Collections.Generic;
+using AwesomeAssertions;
+using NUnit.Framework;
+using RomForge.Core.Matching;
+using RomForge.Core.Models;
+using RomForge.Core.Scanning;
+
+namespace RomForge.Core.UnitTests.Matching;
+
+[TestOf(typeof(RomMatcher))]
+public class RomMatcherTests
+{
+    private static Game GameWith(
+        uint crc,
+        string romExt = "gba",
+        int release = 0,
+        string title = ""
+    ) =>
+        new()
+        {
+            Files = new GameFiles { RomCrc = crc, RomExtension = romExt },
+            ReleaseNumber = release,
+            Title = title,
+        };
+
+    private static ScannedRom RomWith(
+        uint crc,
+        string fileExt = "7z",
+        string romExt = "gba",
+        string path = "/roms/game.7z",
+        uint? trimmedCrc = null
+    ) =>
+        new()
+        {
+            Crc = crc,
+            RomExtension = romExt,
+            FileExtension = fileExt,
+            FilePath = path,
+            TrimmedCrc = trimmedCrc,
+        };
+
+    private static DatFile DatWith(params Game[] games) => new() { Games = [.. games] };
+
+    private static DatFile DatWith(string mask, params Game[] games) =>
+        new()
+        {
+            Header = new DatHeader { RomTitle = mask },
+            Games = [.. games],
+        };
+
+    [Test]
+    public void Match_CrcAndArchiveExtensionMatch_ReturnsVerified()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms = [RomWith(0x12345678)];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results.Should().HaveCount(1);
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].ScannedRom.Should().NotBeNull();
+    }
+
+    [Test]
+    public void Match_CrcNotFound_ReturnsMissing()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms = [RomWith(0xDEADBEEF)];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Missing);
+        results[0].ScannedRom.Should().BeNull();
+    }
+
+    [Test]
+    public void Match_CrcMatchArchiveExtensionMismatch_ReturnsWrongArchiveType()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms = [RomWith(0x12345678, fileExt: "zip")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.WrongArchiveType);
+        results[0].ScannedRom.Should().NotBeNull();
+    }
+
+    [Test]
+    public void Match_EmptyRomList_AllMissing()
+    {
+        DatFile dat = DatWith(GameWith(0x11111111), GameWith(0x22222222));
+
+        List<MatchResult> results = RomMatcher.Match(dat, []);
+
+        results.Should().HaveCount(2);
+        results.Should().AllSatisfy(r => r.Status.Should().Be(MatchStatus.Missing));
+    }
+
+    [Test]
+    public void Match_EmptyDat_ReturnsEmpty()
+    {
+        DatFile dat = DatWith();
+
+        List<MatchResult> results = RomMatcher.Match(dat, [RomWith(0x12345678)]);
+
+        results.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Match_DuplicateCrcInCollection_FirstWins()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms =
+        [
+            RomWith(0x12345678, path: "/roms/first.7z"),
+            RomWith(0x12345678, path: "/roms/second.7z"),
+        ];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].ScannedRom!.FilePath.Should().Be("/roms/first.7z");
+    }
+
+    [Test]
+    public void Match_MixedCollection_ReturnsCorrectStatuses()
+    {
+        DatFile dat = DatWith(GameWith(0x11111111), GameWith(0x22222222), GameWith(0x33333333));
+        List<ScannedRom> roms = [RomWith(0x11111111), RomWith(0x33333333, fileExt: "zip")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[1].Status.Should().Be(MatchStatus.Missing);
+        results[2].Status.Should().Be(MatchStatus.WrongArchiveType);
+    }
+
+    [Test]
+    public void Match_CorrectFilename_ReturnsVerified()
+    {
+        DatFile dat = DatWith("%u - %n", GameWith(0x12345678, release: 1, title: "Test Game"));
+        List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/0001 - Test Game.7z")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+    }
+
+    [Test]
+    public void Match_IncorrectFilename_ReturnsIncorrectlyNamed()
+    {
+        DatFile dat = DatWith("%u - %n", GameWith(0x12345678, release: 1, title: "Test Game"));
+        List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/Wrong Name.7z")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.IncorrectlyNamed);
+        results[0].ScannedRom.Should().NotBeNull();
+    }
+
+    [Test]
+    public void Match_EmptyMask_SkipsNameCheck()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678, release: 1, title: "Test Game"));
+        List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/Wrong Name.7z")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+    }
+
+    [Test]
+    public void Match_CustomExpectedArchiveExtension_UsesProvidedExtension()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms = [RomWith(0x12345678, fileExt: "zip")];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms, expectedArchiveExtension: "zip");
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+    }
+
+    [Test]
+    public void Match_TrimmedCrcMatchesGame_ReturnsUntrimmed()
+    {
+        DatFile dat = DatWith(GameWith(0xABCDABCD));
+        List<ScannedRom> roms = [RomWith(0xDEADDEAD, trimmedCrc: 0xABCDABCD)];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Untrimmed);
+        results[0].ScannedRom.Should().NotBeNull();
+    }
+
+    [Test]
+    public void Match_FullCrcMatchTakesPriorityOverTrimmedCrc()
+    {
+        DatFile dat = DatWith(GameWith(0x11111111), GameWith(0x22222222));
+        List<ScannedRom> roms =
+        [
+            RomWith(0x11111111),
+            RomWith(0xDEADBEEF, trimmedCrc: 0x11111111),
+        ];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[1].Status.Should().Be(MatchStatus.Missing);
+    }
+
+    [Test]
+    public void Match_TrimmedCrcPresentButNoGameMatchesTrimmedCrc_ReturnsMissing()
+    {
+        DatFile dat = DatWith(GameWith(0x99999999));
+        List<ScannedRom> roms = [RomWith(0xAAAAAAAA, trimmedCrc: 0xBBBBBBBB)];
+
+        List<MatchResult> results = RomMatcher.Match(dat, roms);
+
+        results[0].Status.Should().Be(MatchStatus.Missing);
+    }
+}

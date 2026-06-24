@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:RomForge.UI.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="RomForge.UI.Views.ProgressWindow"
+        x:DataType="vm:ProgressWindowVM"
+        Width="440" Height="120"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Design.DataContext>
+        <vm:ProgressWindowVM/>
+    </Design.DataContext>
+
+    <StackPanel Margin="16" Spacing="10">
+        <TextBlock Text="{Binding CurrentFile}"
+                   FontSize="12"
+                   TextTrimming="CharacterEllipsis"/>
+        <ProgressBar Minimum="0" Maximum="100"
+                     Value="{Binding Progress}"
+                     Height="16"/>
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Grid.Column="0"
+                       Text="{Binding CountText}"
+                       VerticalAlignment="Center"
+                       FontSize="12"/>
+            <Button Grid.Column="1"
+                    Content="Cancel"
+                    Command="{Binding CancelCommand}"
+                    IsVisible="{Binding IsCancellable}"
+                    Padding="12,4"/>
+        </Grid>
+    </StackPanel>
+</Window>

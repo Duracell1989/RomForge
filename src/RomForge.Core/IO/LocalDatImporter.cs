@@ -1,0 +1,137 @@
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentResults;
+using RomForge.Core.Models;
+using RomForge.Core.Services;
+using Serilog;
+
+namespace RomForge.Core.IO;
+
+public sealed class LocalDatImporter : IDatImporter
+{
+    private readonly AppDataService _appData;
+    private readonly ILogger _logger;
+
+    public LocalDatImporter(AppDataService appData, ILogger logger)
+    {
+        _appData = appData;
+        _logger = logger.ForContext<LocalDatImporter>();
+    }
+
+    public async Task<Result<string>> ImportAsync(
+        string sourceDatPath,
+        DatHeader header,
+        IProgress<ImportProgress>? progress,
+        CancellationToken ct
+    )
+    {
+        string destDatPath = Path.Combine(_appData.DatsPath, Path.GetFileName(sourceDatPath));
+
+        if (!string.Equals(sourceDatPath, destDatPath, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                File.Copy(sourceDatPath, destDatPath, overwrite: true);
+                _logger.Information(
+                    "Imported DAT {FileName} to managed store",
+                    Path.GetFileName(sourceDatPath)
+                );
+            }
+            catch (Exception ex)
+            {
+                return Result.Fail($"Could not copy DAT file: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            await CopyImagesAsync(sourceDatPath, header, progress, ct);
+        }
+        catch (OperationCanceledException ex)
+        {
+            _logger.Information(
+                ex,
+                "Image copy cancelled for {Dat}",
+                Path.GetFileName(sourceDatPath)
+            );
+        }
+
+        return Result.Ok(destDatPath);
+    }
+
+    private async Task CopyImagesAsync(
+        string sourceDatPath,
+        DatHeader header,
+        IProgress<ImportProgress>? progress,
+        CancellationToken ct
+    )
+    {
+        string? sourceImgsBase = FindSourceImgsBase(sourceDatPath);
+        if (
+            sourceImgsBase is null
+            || sourceImgsBase.StartsWith(_appData.ImgsPath, StringComparison.OrdinalIgnoreCase)
+        )
+            return;
+
+        string folderName = string.IsNullOrEmpty(header.ImFolder) ? header.DatName : header.ImFolder;
+        string sourceImgFolder = Path.Combine(sourceImgsBase, folderName);
+        if (!Directory.Exists(sourceImgFolder))
+            return;
+
+        string[] files = Directory.GetFiles(sourceImgFolder, "*.png", SearchOption.AllDirectories);
+        if (files.Length == 0)
+            return;
+
+        _logger.Information("Copying {Count} images for {Folder}", files.Length, folderName);
+
+        string destImgFolder = Path.Combine(_appData.ImgsPath, folderName);
+
+        progress?.Report(new ImportProgress(Current: 0, Total: files.Length, CurrentFile: string.Empty));
+
+        for (int i = 0; i < files.Length; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            string file = files[i];
+            string relative = Path.GetRelativePath(sourceImgFolder, file);
+            string destFile = Path.Combine(destImgFolder, relative);
+            string? destDir = Path.GetDirectoryName(destFile);
+            if (destDir is not null)
+                Directory.CreateDirectory(destDir);
+
+            await Task.Run(() => File.Copy(file, destFile, overwrite: true), ct);
+
+            progress?.Report(
+                new ImportProgress(
+                    Current: i + 1,
+                    Total: files.Length,
+                    CurrentFile: Path.GetFileName(file)
+                )
+            );
+        }
+
+        _logger.Information(
+            "Image copy complete: {Count} files for {Folder}",
+            files.Length,
+            folderName
+        );
+    }
+
+    private static string? FindSourceImgsBase(string datFilePath)
+    {
+        string datDir = Path.GetDirectoryName(datFilePath) ?? string.Empty;
+        string parentDir = Path.GetDirectoryName(datDir) ?? string.Empty;
+
+        string parentImgs = Path.Combine(parentDir, "imgs");
+        if (Directory.Exists(parentImgs))
+            return parentImgs;
+
+        string sameImgs = Path.Combine(datDir, "imgs");
+        if (Directory.Exists(sameImgs))
+            return sameImgs;
+
+        return null;
+    }
+}

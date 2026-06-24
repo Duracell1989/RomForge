@@ -1,0 +1,31 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="README.md" />
+    <File Path="CHANGELOG.md" />
+    <File Path="CONTRIBUTING.md" />
+    <File Path="LICENSE" />
+    <File Path="SECURITY.md" />
+  </Folder>
+  <Folder Name="/build/">
+    <File Path="Directory.Build.props" />
+    <File Path="coverage.runsettings" />
+    <File Path="dotnet-tools.json" />
+    <File Path="sonar-project.properties" />
+  </Folder>
+  <Folder Name="/packaging/">
+    <File Path="packaging/macos/Info.plist" />
+  </Folder>
+  <Folder Name="/.github/">
+    <File Path=".github/workflows/ci.yml" />
+    <File Path=".github/workflows/release.yml" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/RomForge.Core/RomForge.Core.csproj" />
+    <Project Path="src/RomForge.UI/RomForge.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RomForge.Core.UnitTests/RomForge.Core.UnitTests.csproj" />
+    <Project Path="tests/RomForge.Core.IntegrationTests/RomForge.Core.IntegrationTests.csproj" />
+    <Project Path="tests/RomForge.UI.UnitTests/RomForge.UI.UnitTests.csproj" />
+  </Folder>
+</Solution>

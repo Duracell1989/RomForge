@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - rid: osx-arm64
+            archive: RomForge-osx-arm64.tar.gz
+          - rid: osx-x64
+            archive: RomForge-osx-x64.tar.gz
+          - rid: win-x64
+            archive: RomForge-win-x64.zip
+          - rid: linux-x64
+            archive: RomForge-linux-x64.tar.gz
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish
+        run: |
+          dotnet publish src/RomForge.UI/RomForge.UI.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -o artifacts/publish/${{ matrix.rid }}
+
+      # CreateMacOSBundle MSBuild target fires automatically on publish for osx-* RIDs.
+      # It assembles artifacts/RomForge.app and chmod +x the binary.
+      - name: Package (macOS)
+        if: startsWith(matrix.rid, 'osx-')
+        run: tar czf ${{ matrix.archive }} -C artifacts RomForge.app
+
+      - name: Package (Windows)
+        if: matrix.rid == 'win-x64'
+        run: |
+          cd artifacts/publish/win-x64
+          zip -r "$GITHUB_WORKSPACE/${{ matrix.archive }}" .
+
+      - name: Package (Linux)
+        if: matrix.rid == 'linux-x64'
+        run: tar czf ${{ matrix.archive }} -C artifacts/publish/linux-x64 .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
