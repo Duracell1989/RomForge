@@ -8,4 +8,15 @@ public sealed class MatchResult
     public required Game Game { get; init; }
     public required MatchStatus Status { get; init; }
     public ScannedRom? ScannedRom { get; init; }
+    public bool IsIncorrectlyNamed { get; init; }
+    public bool IsWrongArchiveType { get; init; }
+    public bool IsUntrimmed { get; init; }
+    public bool IsReArchived { get; init; }
+
+    public bool IsGood =>
+        Status == MatchStatus.Verified
+        && !IsIncorrectlyNamed
+        && !IsWrongArchiveType
+        && !IsUntrimmed
+        && IsReArchived;
 }

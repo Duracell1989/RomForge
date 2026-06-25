@@ -36,6 +36,7 @@ public partial class MainWindowVM : VMBase
     private readonly IDatDownloader _downloader;
     private readonly DatConfigService _configService;
     private readonly ScanResultStore _scanResultStore;
+    private readonly ReArchiveStore _reArchiveStore;
 
     private ObservableCollection<GameRowVM>? _subscribedGames;
 
@@ -88,7 +89,8 @@ public partial class MainWindowVM : VMBase
         IDatUpdateChecker updateChecker,
         IDatDownloader downloader,
         DatConfigService configService,
-        ScanResultStore scanResultStore
+        ScanResultStore scanResultStore,
+        ReArchiveStore reArchiveStore
     )
     {
         _fileDialogs = fileDialogs;
@@ -105,6 +107,7 @@ public partial class MainWindowVM : VMBase
         _downloader = downloader;
         _configService = configService;
         _scanResultStore = scanResultStore;
+        _reArchiveStore = reArchiveStore;
         LoadedDats = new ObservableCollection<LoadedDatVM>();
         ArchiveFormat = "7z";
     }
@@ -253,6 +256,7 @@ public partial class MainWindowVM : VMBase
     public async Task LoadManagedDatsAsync()
     {
         await _scanResultStore.InitializeAsync();
+        await _reArchiveStore.InitializeAsync();
 
         foreach (string path in _appData.GetImportedDatPaths())
         {
@@ -366,20 +370,37 @@ public partial class MainWindowVM : VMBase
         await _configService.UpdateRomFolderAsync(ActiveDat.DatFile.Header.DatName, folder);
 
         MatchSummary summary = RomMatcher.Match(ActiveDat.DatFile, scannedRoms);
+        string datName = ActiveDat.DatFile.Header.DatName;
+
+        HashSet<int> reArchived = await _reArchiveStore.GetReArchivedReleasesAsync(datName);
+        List<MatchResult> results = summary.Results
+            .Select(r => reArchived.Contains(r.Game.ReleaseNumber)
+                ? new MatchResult
+                {
+                    Game = r.Game,
+                    Status = r.Status,
+                    ScannedRom = r.ScannedRom,
+                    IsIncorrectlyNamed = r.IsIncorrectlyNamed,
+                    IsWrongArchiveType = r.IsWrongArchiveType,
+                    IsUntrimmed = r.IsUntrimmed,
+                    IsReArchived = true,
+                }
+                : r)
+            .ToList();
+
         ActiveDat.UnmatchedRoms = summary.UnmatchedRoms;
-        ActiveDat.Games = new ObservableCollection<GameRowVM>(
-            summary.Results.Select(ActiveDat.BuildGameRow)
-        );
-        await _scanResultStore.SaveResultsAsync(ActiveDat.DatFile.Header.DatName, summary.Results);
+        ActiveDat.Games = new ObservableCollection<GameRowVM>(results.Select(ActiveDat.BuildGameRow));
+        await _scanResultStore.SaveResultsAsync(datName, results);
 
         _logger.Information(
-            "Scan complete: {Total} games, {Verified} verified, {Missing} missing, {BadName} incorrectly named, {BadArchive} wrong archive type, {Untrimmed} untrimmed, {Unmatched} unmatched",
-            summary.Results.Count,
-            summary.Results.Count(r => r.Status == MatchStatus.Verified),
-            summary.Results.Count(r => r.Status == MatchStatus.Missing),
-            summary.Results.Count(r => r.Status == MatchStatus.IncorrectlyNamed),
-            summary.Results.Count(r => r.Status == MatchStatus.WrongArchiveType),
-            summary.Results.Count(r => r.Status == MatchStatus.Untrimmed),
+            "Scan complete: {Total} games, {Verified} verified, {Good} good, {Missing} missing, {BadName} incorrectly named, {BadArchive} wrong archive type, {Untrimmed} untrimmed, {Unmatched} unmatched",
+            results.Count,
+            results.Count(r => r.Status == MatchStatus.Verified),
+            results.Count(r => r.IsGood),
+            results.Count(r => r.Status == MatchStatus.Missing),
+            results.Count(r => r.IsIncorrectlyNamed),
+            results.Count(r => r.IsWrongArchiveType),
+            results.Count(r => r.IsUntrimmed),
             summary.UnmatchedRoms.Count
         );
     }
@@ -411,6 +432,7 @@ public partial class MainWindowVM : VMBase
                 Game = SelectedGame.Game,
                 Status = SelectedGame.Status,
                 ScannedRom = SelectedGame.ScannedRom,
+                IsIncorrectlyNamed = SelectedGame.IsIncorrectlyNamed,
             },
             ActiveDat.DatFile.Header.RomTitle
         );
@@ -425,18 +447,23 @@ public partial class MainWindowVM : VMBase
             return;
         }
 
-        ScannedRom updatedRom = SelectedGame.ScannedRom! with { FilePath = target.Value.To };
+        GameRowVM snapshot = SelectedGame;
+        ScannedRom updatedRom = snapshot.ScannedRom! with { FilePath = target.Value.To };
         await ReplaceSelectedGameAsync(
             new MatchResult
             {
-                Game = SelectedGame.Game,
+                Game = snapshot.Game,
                 Status = MatchStatus.Verified,
                 ScannedRom = updatedRom,
+                IsIncorrectlyNamed = false,
+                IsWrongArchiveType = snapshot.IsWrongArchiveType,
+                IsUntrimmed = snapshot.IsUntrimmed,
+                IsReArchived = snapshot.IsReArchived,
             }
         );
     }
 
-    private bool CanRename() => SelectedGame?.Status == MatchStatus.IncorrectlyNamed;
+    private bool CanRename() => SelectedGame?.IsIncorrectlyNamed == true;
 
     [RelayCommand(CanExecute = nameof(CanRenameAll))]
     private async Task RenameAllAsync()
@@ -445,7 +472,7 @@ public partial class MainWindowVM : VMBase
             return;
 
         List<GameRowVM> targets = ActiveDat
-            .Games.Where(g => g.Status == MatchStatus.IncorrectlyNamed)
+            .Games.Where(g => g.IsIncorrectlyNamed)
             .ToList();
 
         if (targets.Count == 0)
@@ -488,6 +515,7 @@ public partial class MainWindowVM : VMBase
                     Game = game.Game,
                     Status = game.Status,
                     ScannedRom = game.ScannedRom,
+                    IsIncorrectlyNamed = game.IsIncorrectlyNamed,
                 },
                 ActiveDat!.DatFile.Header.RomTitle
             );
@@ -510,6 +538,10 @@ public partial class MainWindowVM : VMBase
                     Game = game.Game,
                     Status = MatchStatus.Verified,
                     ScannedRom = updatedRom,
+                    IsIncorrectlyNamed = false,
+                    IsWrongArchiveType = game.IsWrongArchiveType,
+                    IsUntrimmed = game.IsUntrimmed,
+                    IsReArchived = game.IsReArchived,
                 }
             );
         }
@@ -521,7 +553,7 @@ public partial class MainWindowVM : VMBase
         !IsReArchiving
         && !IsTrimming
         && ActiveDat is not null
-        && ActiveDat.Games.Any(g => g.Status == MatchStatus.IncorrectlyNamed);
+        && ActiveDat.Games.Any(g => g.IsIncorrectlyNamed);
 
     [RelayCommand(CanExecute = nameof(CanReArchive))]
     private async Task ReArchiveSelectedAsync()
@@ -535,6 +567,7 @@ public partial class MainWindowVM : VMBase
                 Game = SelectedGame.Game,
                 Status = SelectedGame.Status,
                 ScannedRom = SelectedGame.ScannedRom,
+                IsUntrimmed = SelectedGame.IsUntrimmed,
             },
             ActiveDat.DatFile.Header.RomTitle,
             ArchiveFormat
@@ -604,6 +637,8 @@ public partial class MainWindowVM : VMBase
                 FilePath = target.To,
                 FileExtension = ArchiveFormat,
             };
+            string datName = ActiveDat!.DatFile.Header.DatName;
+            await _reArchiveStore.MarkAsync(datName, game.Game.ReleaseNumber);
             await ReplaceGameAsync(
                 game,
                 new MatchResult
@@ -611,6 +646,10 @@ public partial class MainWindowVM : VMBase
                     Game = game.Game,
                     Status = MatchStatus.Verified,
                     ScannedRom = updatedRom,
+                    IsIncorrectlyNamed = game.IsIncorrectlyNamed,
+                    IsWrongArchiveType = false,
+                    IsUntrimmed = game.IsUntrimmed,
+                    IsReArchived = true,
                 }
             );
 
@@ -632,7 +671,8 @@ public partial class MainWindowVM : VMBase
     private bool CanReArchive() =>
         !IsReArchiving
         && !IsTrimming
-        && SelectedGame?.Status == MatchStatus.WrongArchiveType
+        && SelectedGame?.Status == MatchStatus.Verified
+        && !SelectedGame.IsUntrimmed
         && _compressor.IsAvailable;
 
     [RelayCommand(CanExecute = nameof(CanReArchiveAll))]
@@ -642,7 +682,7 @@ public partial class MainWindowVM : VMBase
             return;
 
         List<GameRowVM> targets = ActiveDat
-            .Games.Where(g => g.Status == MatchStatus.WrongArchiveType)
+            .Games.Where(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed)
             .ToList();
 
         if (targets.Count == 0)
@@ -691,6 +731,7 @@ public partial class MainWindowVM : VMBase
                         Game = game.Game,
                         Status = game.Status,
                         ScannedRom = game.ScannedRom,
+                        IsUntrimmed = game.IsUntrimmed,
                     },
                     ActiveDat!.DatFile.Header.RomTitle,
                     ArchiveFormat
@@ -749,6 +790,8 @@ public partial class MainWindowVM : VMBase
                         FilePath = target.Value.To,
                         FileExtension = ArchiveFormat,
                     };
+                    string datName = ActiveDat!.DatFile.Header.DatName;
+                    await _reArchiveStore.MarkAsync(datName, game.Game.ReleaseNumber);
                     await ReplaceGameAsync(
                         game,
                         new MatchResult
@@ -756,6 +799,10 @@ public partial class MainWindowVM : VMBase
                             Game = game.Game,
                             Status = MatchStatus.Verified,
                             ScannedRom = updatedRom,
+                            IsIncorrectlyNamed = game.IsIncorrectlyNamed,
+                            IsWrongArchiveType = false,
+                            IsUntrimmed = game.IsUntrimmed,
+                            IsReArchived = true,
                         }
                     );
                 }
@@ -788,7 +835,7 @@ public partial class MainWindowVM : VMBase
         && !IsTrimming
         && _compressor.IsAvailable
         && ActiveDat is not null
-        && ActiveDat.Games.Any(g => g.Status == MatchStatus.WrongArchiveType);
+        && ActiveDat.Games.Any(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed);
 
     [RelayCommand(CanExecute = nameof(CanTrim))]
     private async Task TrimSelectedAsync()
@@ -802,6 +849,7 @@ public partial class MainWindowVM : VMBase
                 Game = SelectedGame.Game,
                 Status = SelectedGame.Status,
                 ScannedRom = SelectedGame.ScannedRom,
+                IsUntrimmed = SelectedGame.IsUntrimmed,
             },
             ActiveDat.DatFile.Header.RomTitle,
             ArchiveFormat
@@ -886,6 +934,10 @@ public partial class MainWindowVM : VMBase
                     Game = game.Game,
                     Status = MatchStatus.Verified,
                     ScannedRom = updatedRom,
+                    IsIncorrectlyNamed = false,
+                    IsWrongArchiveType = false,
+                    IsUntrimmed = false,
+                    IsReArchived = game.IsReArchived,
                 }
             );
 
@@ -906,7 +958,7 @@ public partial class MainWindowVM : VMBase
 
     private bool CanTrim() =>
         !IsTrimming
-        && SelectedGame?.Status == MatchStatus.Untrimmed
+        && SelectedGame?.IsUntrimmed == true
         && _compressor.IsAvailable;
 
     [RelayCommand(CanExecute = nameof(CanTrimAll))]
@@ -916,7 +968,7 @@ public partial class MainWindowVM : VMBase
             return;
 
         List<GameRowVM> targets = ActiveDat
-            .Games.Where(g => g.Status == MatchStatus.Untrimmed)
+            .Games.Where(g => g.IsUntrimmed)
             .ToList();
 
         if (targets.Count == 0)
@@ -985,7 +1037,13 @@ public partial class MainWindowVM : VMBase
     )
     {
         (string From, string To)? target = RomTrimmer.GetTrimTarget(
-            new MatchResult { Game = game.Game, Status = game.Status, ScannedRom = game.ScannedRom },
+            new MatchResult
+            {
+                Game = game.Game,
+                Status = game.Status,
+                ScannedRom = game.ScannedRom,
+                IsUntrimmed = game.IsUntrimmed,
+            },
             ActiveDat!.DatFile.Header.RomTitle,
             ArchiveFormat
         );
@@ -1052,7 +1110,16 @@ public partial class MainWindowVM : VMBase
             };
             await ReplaceGameAsync(
                 game,
-                new MatchResult { Game = game.Game, Status = MatchStatus.Verified, ScannedRom = updatedRom }
+                new MatchResult
+                {
+                    Game = game.Game,
+                    Status = MatchStatus.Verified,
+                    ScannedRom = updatedRom,
+                    IsIncorrectlyNamed = false,
+                    IsWrongArchiveType = false,
+                    IsUntrimmed = false,
+                    IsReArchived = game.IsReArchived,
+                }
             );
 
             return null;
@@ -1069,7 +1136,7 @@ public partial class MainWindowVM : VMBase
         && !IsReArchiving
         && _compressor.IsAvailable
         && ActiveDat is not null
-        && ActiveDat.Games.Any(g => g.Status == MatchStatus.Untrimmed);
+        && ActiveDat.Games.Any(g => g.IsUntrimmed);
 
     private async Task ReplaceGameAsync(GameRowVM original, MatchResult updatedMatch)
     {

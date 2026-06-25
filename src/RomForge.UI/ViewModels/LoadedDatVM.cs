@@ -52,6 +52,9 @@ public partial class LoadedDatVM : VMBase
     public partial bool ShowUntrimmed { get; set; }
 
     [ObservableProperty]
+    public partial bool ShowGood { get; set; }
+
+    [ObservableProperty]
     public partial string TitleFilter { get; set; }
 
     [ObservableProperty]
@@ -73,6 +76,7 @@ public partial class LoadedDatVM : VMBase
         ShowIncorrectlyNamed = true;
         ShowWrongArchiveType = true;
         ShowUntrimmed = true;
+        ShowGood = true;
         TitleFilter = string.Empty;
     }
 
@@ -96,25 +100,24 @@ public partial class LoadedDatVM : VMBase
             if (Games.Count == 0)
                 return "No scan yet";
 
-            int verified = Games.Count(g => g.Status == MatchStatus.Verified);
-            int incorrectlyNamed = Games.Count(g => g.Status == MatchStatus.IncorrectlyNamed);
-            int wrongArchiveType = Games.Count(g => g.Status == MatchStatus.WrongArchiveType);
-            int untrimmed = Games.Count(g => g.Status == MatchStatus.Untrimmed);
+            int good = Games.Count(g => g.IsGood);
+            int verified = Games.Count(g => g.Status == MatchStatus.Verified && !g.IsGood);
+            int incorrectlyNamed = Games.Count(g => g.IsIncorrectlyNamed && !g.IsUntrimmed);
+            int wrongArchiveType = Games.Count(g => g.IsWrongArchiveType && !g.IsUntrimmed);
+            int untrimmed = Games.Count(g => g.IsUntrimmed);
             int missing = Games.Count(g => g.Status == MatchStatus.Missing);
 
-            List<string> segments = new List<string>
-            {
-                $"{Games.Count} games",
-                $"{verified} verified",
-            };
+            List<string> segments = new List<string> { $"{Games.Count} games" };
 
+            if (good > 0)
+                segments.Add($"{good} good");
+            segments.Add($"{verified} verified");
             if (incorrectlyNamed > 0)
                 segments.Add($"{incorrectlyNamed} incorrectly named");
             if (wrongArchiveType > 0)
-                segments.Add($"{wrongArchiveType} wrong archive type");
+                segments.Add($"{wrongArchiveType} wrong archive");
             if (untrimmed > 0)
                 segments.Add($"{untrimmed} untrimmed");
-
             segments.Add($"{missing} missing");
 
             string summary = string.Join("  •  ", segments);
@@ -129,6 +132,7 @@ public partial class LoadedDatVM : VMBase
         || !ShowIncorrectlyNamed
         || !ShowWrongArchiveType
         || !ShowUntrimmed
+        || !ShowGood
         || !string.IsNullOrEmpty(TitleFilter);
 
     private static string ResolveImgsBasePath(string datFilePath)
@@ -197,8 +201,8 @@ public partial class LoadedDatVM : VMBase
                     System.StringComparer.CurrentCultureIgnoreCase
                 ),
             SortColumn.Status => _sortDescending
-                ? items.OrderByDescending(g => g.Status)
-                : items.OrderBy(g => g.Status),
+                ? items.OrderByDescending(g => g.StatusSortKey)
+                : items.OrderBy(g => g.StatusSortKey),
             _ => items,
         };
 
@@ -215,6 +219,7 @@ public partial class LoadedDatVM : VMBase
                 or nameof(ShowIncorrectlyNamed)
                 or nameof(ShowWrongArchiveType)
                 or nameof(ShowUntrimmed)
+                or nameof(ShowGood)
         )
             RefreshFilter();
     }
@@ -230,15 +235,18 @@ public partial class LoadedDatVM : VMBase
 
     private bool MatchesFilter(GameRowVM vm)
     {
-        if (!ShowVerified && vm.Status == MatchStatus.Verified)
+        if (vm.Status == MatchStatus.Missing && !ShowMissing)
             return false;
-        if (!ShowMissing && vm.Status == MatchStatus.Missing)
+        if (vm.IsUntrimmed && !ShowUntrimmed)
             return false;
-        if (!ShowIncorrectlyNamed && vm.Status == MatchStatus.IncorrectlyNamed)
+        if (!vm.IsUntrimmed && vm.IsWrongArchiveType && !ShowWrongArchiveType)
             return false;
-        if (!ShowWrongArchiveType && vm.Status == MatchStatus.WrongArchiveType)
+        if (!vm.IsUntrimmed && !vm.IsWrongArchiveType && vm.IsIncorrectlyNamed && !ShowIncorrectlyNamed)
             return false;
-        if (!ShowUntrimmed && vm.Status == MatchStatus.Untrimmed)
+        if (vm.IsGood && !ShowGood)
+            return false;
+        if (vm.Status == MatchStatus.Verified && !vm.IsUntrimmed && !vm.IsWrongArchiveType
+            && !vm.IsIncorrectlyNamed && !vm.IsReArchived && !ShowVerified)
             return false;
         if (
             !string.IsNullOrEmpty(TitleFilter)

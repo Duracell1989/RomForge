@@ -1,8 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:RomForge.UI.ViewModels"
-        xmlns:converters="using:RomForge.UI.Converters"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         x:Class="RomForge.UI.Views.MainWindow"
@@ -30,11 +29,7 @@
         </Style>
     </Window.Styles>
 
-    <Window.Resources>
-        <converters:MatchStatusToBrushConverter x:Key="StatusToBrush"/>
-    </Window.Resources>
-
-    <Design.DataContext>
+<Design.DataContext>
         <vm:MainWindowVM/>
     </Design.DataContext>
 
@@ -130,6 +125,8 @@
                                               IsChecked="{Binding ActiveDat.ShowWrongArchiveType}"/>
                                     <CheckBox Content="Untrimmed"
                                               IsChecked="{Binding ActiveDat.ShowUntrimmed}"/>
+                                    <CheckBox Content="Good"
+                                              IsChecked="{Binding ActiveDat.ShowGood}"/>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -201,7 +198,7 @@
                                                    VerticalAlignment="Center"/>
                                         <TextBlock Grid.Column="3"
                                                    Text="{Binding StatusText}"
-                                                   Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}"
+                                                   Foreground="{Binding StatusBrush}"
                                                    FontSize="12"
                                                    VerticalAlignment="Center"/>
                                     </Grid>
@@ -255,7 +252,7 @@
                                             <TextBlock Grid.Row="2" Grid.Column="0" Text="Status:" Opacity="0.6"/>
                                             <TextBlock Grid.Row="2" Grid.Column="1"
                                                        Text="{Binding StatusText}"
-                                                       Foreground="{Binding Status, Converter={StaticResource StatusToBrush}}"/>
+                                                       Foreground="{Binding StatusBrush}"/>
 
                                             <TextBlock Grid.Row="3" Grid.Column="0" Text="Location:" Opacity="0.6"/>
                                             <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Location}"/>

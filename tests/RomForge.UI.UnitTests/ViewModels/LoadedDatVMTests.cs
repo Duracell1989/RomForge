@@ -36,12 +36,26 @@ public class LoadedDatVMTests
     {
         LoadedDatVM vm = new LoadedDatVM(MakeDat(), "/test/dat.xml");
 
-        void Add(Game g, MatchStatus s) =>
-            vm.Games.Add(new GameRowVM(new MatchResult { Game = g, Status = s }, "/imgs", new DatHeader(), []));
-
-        Add(new Game { ReleaseNumber = 1, Title = "A" }, MatchStatus.Verified);
-        Add(new Game { ReleaseNumber = 2, Title = "B" }, MatchStatus.Missing);
-        Add(new Game { ReleaseNumber = 3, Title = "C" }, MatchStatus.IncorrectlyNamed);
+        // A = Verified (no flags) → StatusSortKey 4
+        vm.Games.Add(new GameRowVM(
+            new MatchResult { Game = new Game { ReleaseNumber = 1, Title = "A" }, Status = MatchStatus.Verified },
+            "/imgs", new DatHeader(), []
+        ));
+        // B = Missing → StatusSortKey 0
+        vm.Games.Add(new GameRowVM(
+            new MatchResult { Game = new Game { ReleaseNumber = 2, Title = "B" }, Status = MatchStatus.Missing },
+            "/imgs", new DatHeader(), []
+        ));
+        // C = Verified + IncorrectlyNamed → StatusSortKey 3
+        vm.Games.Add(new GameRowVM(
+            new MatchResult
+            {
+                Game = new Game { ReleaseNumber = 3, Title = "C" },
+                Status = MatchStatus.Verified,
+                IsIncorrectlyNamed = true,
+            },
+            "/imgs", new DatHeader(), []
+        ));
         return vm;
     }
 
@@ -130,15 +144,15 @@ public class LoadedDatVMTests
     }
 
     [Test]
-    public void SortBy_Status_SortsAscending()
+    public void SortBy_Status_SortsAscendingByPriority()
     {
+        // Insertion order: A=Verified(4), B=Missing(0), C=IncorrectlyNamed(3)
+        // Ascending by StatusSortKey: B(0), C(3), A(4)
         LoadedDatVM vm = MakeVmWithStatuses();
 
         vm.SortByCommand.Execute("Status");
 
-        vm.FilteredGames.Select(g => g.Status)
-            .Should()
-            .ContainInOrder(MatchStatus.Verified, MatchStatus.IncorrectlyNamed, MatchStatus.Missing);
+        vm.FilteredGames.Select(g => g.Title).Should().ContainInOrder("B", "C", "A");
     }
 
     [Test]

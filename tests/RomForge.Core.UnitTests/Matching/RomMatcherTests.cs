@@ -74,14 +74,15 @@ public class RomMatcherTests
     }
 
     [Test]
-    public void Match_CrcMatchArchiveExtensionMismatch_ReturnsWrongArchiveType()
+    public void Match_CrcMatchArchiveExtensionMismatch_ReturnsVerifiedWithWrongArchiveTypeFlag()
     {
         DatFile dat = DatWith(GameWith(0x12345678));
         List<ScannedRom> roms = [RomWith(0x12345678, fileExt: "zip")];
 
         IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
-        results[0].Status.Should().Be(MatchStatus.WrongArchiveType);
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].IsWrongArchiveType.Should().BeTrue();
         results[0].ScannedRom.Should().NotBeNull();
     }
 
@@ -131,8 +132,10 @@ public class RomMatcherTests
         IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].IsWrongArchiveType.Should().BeFalse();
         results[1].Status.Should().Be(MatchStatus.Missing);
-        results[2].Status.Should().Be(MatchStatus.WrongArchiveType);
+        results[2].Status.Should().Be(MatchStatus.Verified);
+        results[2].IsWrongArchiveType.Should().BeTrue();
     }
 
     [Test]
@@ -147,14 +150,15 @@ public class RomMatcherTests
     }
 
     [Test]
-    public void Match_IncorrectFilename_ReturnsIncorrectlyNamed()
+    public void Match_IncorrectFilename_ReturnsVerifiedWithIncorrectlyNamedFlag()
     {
         DatFile dat = DatWith("%u - %n", GameWith(0x12345678, release: 1, title: "Test Game"));
         List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/Wrong Name.7z")];
 
         IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
-        results[0].Status.Should().Be(MatchStatus.IncorrectlyNamed);
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].IsIncorrectlyNamed.Should().BeTrue();
         results[0].ScannedRom.Should().NotBeNull();
     }
 
@@ -181,14 +185,15 @@ public class RomMatcherTests
     }
 
     [Test]
-    public void Match_TrimmedCrcMatchesGame_ReturnsUntrimmed()
+    public void Match_TrimmedCrcMatchesGame_ReturnsVerifiedWithUntrimmedFlag()
     {
         DatFile dat = DatWith(GameWith(0xABCDABCD));
         List<ScannedRom> roms = [RomWith(0xDEADDEAD, trimmedCrc: 0xABCDABCD)];
 
         IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
-        results[0].Status.Should().Be(MatchStatus.Untrimmed);
+        results[0].Status.Should().Be(MatchStatus.Verified);
+        results[0].IsUntrimmed.Should().BeTrue();
         results[0].ScannedRom.Should().NotBeNull();
     }
 

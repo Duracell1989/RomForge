@@ -90,6 +90,7 @@ public partial class App : Application
         services.AddSingleton<IDatDownloader, HttpDatDownloader>();
         services.AddSingleton<DatConfigService>();
         services.AddSingleton<ScanResultStore>();
+        services.AddSingleton<ReArchiveStore>();
         services.AddSingleton<MainWindowVM>();
         return services.BuildServiceProvider();
     }

@@ -13,7 +13,7 @@ public static class RomReArchiver
         string targetExtension = "7z"
     )
     {
-        if (result.Status != MatchStatus.WrongArchiveType || result.ScannedRom is null)
+        if (result.Status == MatchStatus.Missing || result.IsUntrimmed || result.ScannedRom is null)
             return null;
 
         string expectedStem = string.IsNullOrEmpty(namingMask)
