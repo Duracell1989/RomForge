@@ -9,7 +9,7 @@ namespace RomForge.Core.Matching;
 
 public static class RomMatcher
 {
-    public static List<MatchResult> Match(
+    public static MatchSummary Match(
         DatFile datFile,
         IReadOnlyList<ScannedRom> scannedRoms,
         string expectedArchiveExtension = "7z"
@@ -18,9 +18,20 @@ public static class RomMatcher
         Dictionary<uint, ScannedRom> byCrc = BuildCrcIndex(scannedRoms);
         Dictionary<uint, ScannedRom> byTrimmedCrc = BuildTrimmedCrcIndex(scannedRoms);
         string namingMask = datFile.Header.RomTitle;
-        return datFile
+
+        List<MatchResult> results = datFile
             .Games.Select(game => Classify(game, byCrc, byTrimmedCrc, namingMask, expectedArchiveExtension))
             .ToList();
+
+        HashSet<uint> datCrcs = datFile.Games.Select(g => g.Files.RomCrc).ToHashSet();
+        List<ScannedRom> unmatched = scannedRoms
+            .Where(r =>
+                !datCrcs.Contains(r.Crc)
+                && (r.TrimmedCrc is null || !datCrcs.Contains(r.TrimmedCrc.Value))
+            )
+            .ToList();
+
+        return new MatchSummary(results, unmatched);
     }
 
     private static Dictionary<uint, ScannedRom> BuildCrcIndex(IReadOnlyList<ScannedRom> scannedRoms)

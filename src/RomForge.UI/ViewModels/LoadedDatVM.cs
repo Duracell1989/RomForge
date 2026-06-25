@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RomForge.Core.Matching;
 using RomForge.Core.Models;
+using RomForge.Core.Scanning;
 
 namespace RomForge.UI.ViewModels;
 
@@ -53,6 +54,12 @@ public partial class LoadedDatVM : VMBase
     [ObservableProperty]
     public partial string TitleFilter { get; set; }
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(UnmatchedCount))]
+    public partial IReadOnlyList<ScannedRom> UnmatchedRoms { get; set; }
+
+    public int UnmatchedCount => UnmatchedRoms.Count;
+
     public LoadedDatVM(DatFile datFile, string datFilePath, DatConfig? config = null)
     {
         _datFile = datFile;
@@ -60,6 +67,7 @@ public partial class LoadedDatVM : VMBase
         _config = config;
         _imgsBasePath = ResolveImgsBasePath(datFilePath);
         Games = new ObservableCollection<GameRowVM>();
+        UnmatchedRoms = [];
         ShowVerified = true;
         ShowMissing = true;
         ShowIncorrectlyNamed = true;

@@ -70,6 +70,9 @@ public partial class MainWindowVM : VMBase
 
     public string StatusSummary => ActiveDat?.StatusSummary ?? "No DAT loaded";
 
+    public string MoveUnverifiedLabel =>
+        $"Move Unverified ({ActiveDat?.UnmatchedCount ?? 0})";
+
 #pragma warning disable S107
     public MainWindowVM(
         IFileDialogService fileDialogs,
@@ -161,6 +164,8 @@ public partial class MainWindowVM : VMBase
         ScanFolderCommand.NotifyCanExecuteChanged();
         RemoveDatCommand.NotifyCanExecuteChanged();
         CheckDatUpdateCommand.NotifyCanExecuteChanged();
+        MoveUnverifiedCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(MoveUnverifiedLabel));
     }
 
     private void OnActiveDatPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -170,6 +175,12 @@ public partial class MainWindowVM : VMBase
 
         if (e.PropertyName == nameof(LoadedDatVM.Games) && sender is LoadedDatVM dat)
             ResubscribeGames(dat.Games);
+
+        if (e.PropertyName == nameof(LoadedDatVM.UnmatchedRoms))
+        {
+            MoveUnverifiedCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(MoveUnverifiedLabel));
+        }
     }
 
     private void ResubscribeGames(ObservableCollection<GameRowVM>? newGames)
@@ -305,7 +316,7 @@ public partial class MainWindowVM : VMBase
         IReadOnlyList<MatchResult> persisted =
             await _scanResultStore.LoadResultsAsync(datFile.Header.DatName, datFile);
         IReadOnlyList<MatchResult> matchResults =
-            persisted.Count > 0 ? persisted : RomMatcher.Match(datVm.DatFile, []);
+            persisted.Count > 0 ? persisted : RomMatcher.Match(datVm.DatFile, []).Results;
 
         datVm.Games = new ObservableCollection<GameRowVM>(matchResults.Select(datVm.BuildGameRow));
         return datVm;
@@ -354,20 +365,22 @@ public partial class MainWindowVM : VMBase
         ActiveDat.RomFolder = folder;
         await _configService.UpdateRomFolderAsync(ActiveDat.DatFile.Header.DatName, folder);
 
-        List<MatchResult> matchResults = RomMatcher.Match(ActiveDat.DatFile, scannedRoms);
+        MatchSummary summary = RomMatcher.Match(ActiveDat.DatFile, scannedRoms);
+        ActiveDat.UnmatchedRoms = summary.UnmatchedRoms;
         ActiveDat.Games = new ObservableCollection<GameRowVM>(
-            matchResults.Select(ActiveDat.BuildGameRow)
+            summary.Results.Select(ActiveDat.BuildGameRow)
         );
-        await _scanResultStore.SaveResultsAsync(ActiveDat.DatFile.Header.DatName, matchResults);
+        await _scanResultStore.SaveResultsAsync(ActiveDat.DatFile.Header.DatName, summary.Results);
 
         _logger.Information(
-            "Scan complete: {Total} games, {Verified} verified, {Missing} missing, {BadName} incorrectly named, {BadArchive} wrong archive type, {Untrimmed} untrimmed",
-            matchResults.Count,
-            matchResults.Count(r => r.Status == MatchStatus.Verified),
-            matchResults.Count(r => r.Status == MatchStatus.Missing),
-            matchResults.Count(r => r.Status == MatchStatus.IncorrectlyNamed),
-            matchResults.Count(r => r.Status == MatchStatus.WrongArchiveType),
-            matchResults.Count(r => r.Status == MatchStatus.Untrimmed)
+            "Scan complete: {Total} games, {Verified} verified, {Missing} missing, {BadName} incorrectly named, {BadArchive} wrong archive type, {Untrimmed} untrimmed, {Unmatched} unmatched",
+            summary.Results.Count,
+            summary.Results.Count(r => r.Status == MatchStatus.Verified),
+            summary.Results.Count(r => r.Status == MatchStatus.Missing),
+            summary.Results.Count(r => r.Status == MatchStatus.IncorrectlyNamed),
+            summary.Results.Count(r => r.Status == MatchStatus.WrongArchiveType),
+            summary.Results.Count(r => r.Status == MatchStatus.Untrimmed),
+            summary.UnmatchedRoms.Count
         );
     }
 
@@ -1072,6 +1085,71 @@ public partial class MainWindowVM : VMBase
 
     private async Task ReplaceSelectedGameAsync(MatchResult updatedMatch) =>
         await ReplaceGameAsync(SelectedGame!, updatedMatch);
+
+    [RelayCommand(CanExecute = nameof(CanMoveUnverified))]
+    private async Task MoveUnverifiedAsync()
+    {
+        if (ActiveDat is null || ActiveDat.UnmatchedRoms.Count == 0)
+            return;
+
+        string? destFolder = await _fileDialogs.PickUnverifiedDestinationAsync();
+        if (destFolder is null)
+            return;
+
+        List<ScannedRom> targets = ActiveDat.UnmatchedRoms.ToList();
+        ProgressWindowVM progressVm = new ProgressWindowVM(targets.Count, isCancellable: true);
+        Task<List<string>> moveTask = MoveUnverifiedCoreAsync(targets, destFolder, ActiveDat, progressVm);
+        await _notifier.ShowProgressAsync("Moving Unverified Files", progressVm, moveTask);
+
+        List<string> errors = await moveTask;
+        _logger.Information(
+            "Move unverified: {Moved}/{Total} moved",
+            targets.Count - errors.Count,
+            targets.Count
+        );
+
+        if (errors.Count > 0)
+            await _notifier.NotifyErrorAsync(
+                $"Move failed for {errors.Count} file(s):\n{string.Join("\n", errors)}"
+            );
+    }
+
+    private async Task<List<string>> MoveUnverifiedCoreAsync(
+        List<ScannedRom> targets,
+        string destFolder,
+        LoadedDatVM activeDat,
+        ProgressWindowVM progress
+    )
+    {
+        List<string> errors = new List<string>();
+        List<ScannedRom> moved = new List<ScannedRom>();
+
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (progress.CancellationToken.IsCancellationRequested)
+                break;
+
+            ScannedRom rom = targets[i];
+            progress.Current = i + 1;
+            progress.CurrentFile = Path.GetFileName(rom.FilePath);
+            progress.Progress = (i + 1) * 100 / targets.Count;
+
+            string destPath = Path.Combine(destFolder, Path.GetFileName(rom.FilePath));
+            Result result = await _fileOperations.RenameAsync(rom.FilePath, destPath);
+
+            if (result.IsFailed)
+                errors.Add($"{Path.GetFileName(rom.FilePath)}: {result.Errors[0].Message}");
+            else
+                moved.Add(rom);
+        }
+
+        if (moved.Count > 0)
+            activeDat.UnmatchedRoms = activeDat.UnmatchedRoms.Where(r => !moved.Contains(r)).ToList();
+
+        return errors;
+    }
+
+    private bool CanMoveUnverified() => ActiveDat?.UnmatchedRoms.Count > 0;
 
     [RelayCommand(CanExecute = nameof(CanCheckDatUpdate))]
     private async Task CheckDatUpdateAsync()

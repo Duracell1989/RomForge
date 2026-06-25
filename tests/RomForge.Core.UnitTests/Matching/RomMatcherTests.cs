@@ -54,7 +54,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x12345678));
         List<ScannedRom> roms = [RomWith(0x12345678)];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results.Should().HaveCount(1);
         results[0].Status.Should().Be(MatchStatus.Verified);
@@ -67,7 +67,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x12345678));
         List<ScannedRom> roms = [RomWith(0xDEADBEEF)];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Missing);
         results[0].ScannedRom.Should().BeNull();
@@ -79,7 +79,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x12345678));
         List<ScannedRom> roms = [RomWith(0x12345678, fileExt: "zip")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.WrongArchiveType);
         results[0].ScannedRom.Should().NotBeNull();
@@ -90,7 +90,7 @@ public class RomMatcherTests
     {
         DatFile dat = DatWith(GameWith(0x11111111), GameWith(0x22222222));
 
-        List<MatchResult> results = RomMatcher.Match(dat, []);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, []).Results;
 
         results.Should().HaveCount(2);
         results.Should().AllSatisfy(r => r.Status.Should().Be(MatchStatus.Missing));
@@ -101,7 +101,7 @@ public class RomMatcherTests
     {
         DatFile dat = DatWith();
 
-        List<MatchResult> results = RomMatcher.Match(dat, [RomWith(0x12345678)]);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, [RomWith(0x12345678)]).Results;
 
         results.Should().BeEmpty();
     }
@@ -116,7 +116,7 @@ public class RomMatcherTests
             RomWith(0x12345678, path: "/roms/second.7z"),
         ];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
         results[0].ScannedRom!.FilePath.Should().Be("/roms/first.7z");
@@ -128,7 +128,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x11111111), GameWith(0x22222222), GameWith(0x33333333));
         List<ScannedRom> roms = [RomWith(0x11111111), RomWith(0x33333333, fileExt: "zip")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
         results[1].Status.Should().Be(MatchStatus.Missing);
@@ -141,7 +141,7 @@ public class RomMatcherTests
         DatFile dat = DatWith("%u - %n", GameWith(0x12345678, release: 1, title: "Test Game"));
         List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/0001 - Test Game.7z")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
     }
@@ -152,7 +152,7 @@ public class RomMatcherTests
         DatFile dat = DatWith("%u - %n", GameWith(0x12345678, release: 1, title: "Test Game"));
         List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/Wrong Name.7z")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.IncorrectlyNamed);
         results[0].ScannedRom.Should().NotBeNull();
@@ -164,7 +164,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x12345678, release: 1, title: "Test Game"));
         List<ScannedRom> roms = [RomWith(0x12345678, path: "/roms/Wrong Name.7z")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
     }
@@ -175,7 +175,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x12345678));
         List<ScannedRom> roms = [RomWith(0x12345678, fileExt: "zip")];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms, expectedArchiveExtension: "zip");
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms, expectedArchiveExtension: "zip").Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
     }
@@ -186,7 +186,7 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0xABCDABCD));
         List<ScannedRom> roms = [RomWith(0xDEADDEAD, trimmedCrc: 0xABCDABCD)];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Untrimmed);
         results[0].ScannedRom.Should().NotBeNull();
@@ -202,7 +202,7 @@ public class RomMatcherTests
             RomWith(0xDEADBEEF, trimmedCrc: 0x11111111),
         ];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Verified);
         results[1].Status.Should().Be(MatchStatus.Missing);
@@ -214,8 +214,68 @@ public class RomMatcherTests
         DatFile dat = DatWith(GameWith(0x99999999));
         List<ScannedRom> roms = [RomWith(0xAAAAAAAA, trimmedCrc: 0xBBBBBBBB)];
 
-        List<MatchResult> results = RomMatcher.Match(dat, roms);
+        IReadOnlyList<MatchResult> results = RomMatcher.Match(dat, roms).Results;
 
         results[0].Status.Should().Be(MatchStatus.Missing);
+    }
+
+    [Test]
+    public void Match_ScannedRomCrcNotInDat_IsInUnmatchedRoms()
+    {
+        DatFile dat = DatWith(GameWith(0x11111111));
+        List<ScannedRom> roms = [RomWith(0x11111111), RomWith(0xDEADBEEF)];
+
+        MatchSummary summary = RomMatcher.Match(dat, roms);
+
+        summary.UnmatchedRoms.Should().HaveCount(1);
+        summary.UnmatchedRoms[0].Crc.Should().Be(0xDEADBEEF);
+    }
+
+    [Test]
+    public void Match_AllRomsMatchDat_UnmatchedIsEmpty()
+    {
+        DatFile dat = DatWith(GameWith(0x11111111));
+        List<ScannedRom> roms = [RomWith(0x11111111)];
+
+        MatchSummary summary = RomMatcher.Match(dat, roms);
+
+        summary.UnmatchedRoms.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Match_EmptyDat_AllRomsAreUnmatched()
+    {
+        DatFile dat = DatWith();
+        List<ScannedRom> roms = [RomWith(0x11111111), RomWith(0x22222222)];
+
+        MatchSummary summary = RomMatcher.Match(dat, roms);
+
+        summary.UnmatchedRoms.Should().HaveCount(2);
+    }
+
+    [Test]
+    public void Match_DuplicateOfKnownRom_IsNotUnmatched()
+    {
+        DatFile dat = DatWith(GameWith(0x12345678));
+        List<ScannedRom> roms =
+        [
+            RomWith(0x12345678, path: "/roms/game.7z"),
+            RomWith(0x12345678, path: "/roms/copy.7z"),
+        ];
+
+        MatchSummary summary = RomMatcher.Match(dat, roms);
+
+        summary.UnmatchedRoms.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Match_UntrimmedVersionOfKnownRom_IsNotUnmatched()
+    {
+        DatFile dat = DatWith(GameWith(0xABCDABCD));
+        List<ScannedRom> roms = [RomWith(0xDEADDEAD, trimmedCrc: 0xABCDABCD)];
+
+        MatchSummary summary = RomMatcher.Match(dat, roms);
+
+        summary.UnmatchedRoms.Should().BeEmpty();
     }
 }
