@@ -12,11 +12,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+
+      - name: Install SonarScanner
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: Begin SonarCloud analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_PERSONAL }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet sonarscanner begin \
+            /k:"Duracell1989_RomForge" \
+            /o:"duracell1989" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.cobertura.reportsPaths="artifacts/coverage/**/coverage.cobertura.xml" \
+            /d:sonar.exclusions="artifacts/**,**/bin/**,**/obj/**,**/*.g.cs"
 
       - name: Restore
         run: dotnet restore RomForge.slnx
@@ -26,6 +44,13 @@ jobs:
 
       - name: Test with coverage
         run: dotnet test RomForge.slnx --no-build --configuration Release --collect:"XPlat Code Coverage" --settings coverage.runsettings --results-directory artifacts/coverage
+
+      - name: End SonarCloud analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_PERSONAL }}
+        run: |
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
 
       - name: Check coverage threshold
         run: |
