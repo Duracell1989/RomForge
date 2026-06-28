@@ -864,18 +864,7 @@ public partial class MainWindowVM : VMBase
                     }
                     else if (updated is not null)
                     {
-                        MatchResult capturedUpdated = updated;
-                        await Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            GameRowVM updatedRow = activeDat.BuildGameRow(capturedUpdated);
-                            int index = activeDat.Games.IndexOf(game);
-                            if (index >= 0)
-                            {
-                                activeDat.Games[index] = updatedRow;
-                                if (ReferenceEquals(SelectedGame, game))
-                                    SelectedGame = updatedRow;
-                            }
-                        });
+                        await UpdateGameRowOnUiThreadAsync(activeDat, game, updated);
                     }
                 }
 
@@ -1235,6 +1224,21 @@ public partial class MainWindowVM : VMBase
 
     private async Task ReplaceSelectedGameAsync(MatchResult updatedMatch) =>
         await ReplaceGameAsync(SelectedGame!, updatedMatch);
+
+    private async Task UpdateGameRowOnUiThreadAsync(LoadedDatVM activeDat, GameRowVM original, MatchResult updated)
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            GameRowVM updatedRow = activeDat.BuildGameRow(updated);
+            int index = activeDat.Games.IndexOf(original);
+            if (index >= 0)
+            {
+                activeDat.Games[index] = updatedRow;
+                if (ReferenceEquals(SelectedGame, original))
+                    SelectedGame = updatedRow;
+            }
+        });
+    }
 
     [RelayCommand(CanExecute = nameof(CanMoveUnverified))]
     private async Task MoveUnverifiedAsync()
