@@ -185,7 +185,12 @@ public partial class MainWindowVM : VMBase
             OnPropertyChanged(nameof(StatusSummary));
 
         if (e.PropertyName == nameof(LoadedDatVM.Games) && sender is LoadedDatVM dat)
+        {
             ResubscribeGames(dat.Games);
+            RenameAllCommand.NotifyCanExecuteChanged();
+            ReArchiveAllCommand.NotifyCanExecuteChanged();
+            TrimAllCommand.NotifyCanExecuteChanged();
+        }
 
         if (e.PropertyName == nameof(LoadedDatVM.UnmatchedRoms))
         {
