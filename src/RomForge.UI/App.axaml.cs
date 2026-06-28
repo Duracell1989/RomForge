@@ -91,6 +91,7 @@ public partial class App : Application
         services.AddSingleton<DatConfigService>();
         services.AddSingleton<ScanResultStore>();
         services.AddSingleton<ReArchiveStore>();
+        services.AddSingleton<AppPreferencesService>();
         services.AddSingleton<MainWindowVM>();
         return services.BuildServiceProvider();
     }
