@@ -58,7 +58,7 @@ public sealed class RomReArchiverTests
     [Test]
     public void GetReArchiveTarget_Missing_ReturnsNull()
     {
-        MatchResult result = new()
+        MatchResult result = new MatchResult
         {
             Game = new Game { ReleaseNumber = 1, Title = "Game" },
             Status = MatchStatus.Missing,

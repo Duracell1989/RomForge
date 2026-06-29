@@ -261,8 +261,7 @@ public partial class LoadedDatVM : VMBase
             return false;
         if (vm.IsGood && !ShowGood)
             return false;
-        if (vm.Status == MatchStatus.Verified && !vm.IsUntrimmed && !vm.IsWrongArchiveType
-            && !vm.IsIncorrectlyNamed && !vm.IsReArchived && !ShowVerified)
+        if (vm.IsGood && !vm.IsReArchived && !ShowVerified)
             return false;
         if (
             !string.IsNullOrEmpty(TitleFilter)

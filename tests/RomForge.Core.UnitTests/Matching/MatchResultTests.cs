@@ -9,28 +9,28 @@ namespace RomForge.Core.UnitTests.Matching;
 public sealed class MatchResultTests
 {
     [Test]
-    public void IsGood_VerifiedAndReArchived_ReturnsTrue()
+    public void IsGood_VerifiedWithNoFlags_ReturnsTrue()
     {
         MatchResult result = new MatchResult
         {
             Game = new Game(),
             Status = MatchStatus.Verified,
-            IsReArchived = true,
         };
 
         result.IsGood.Should().BeTrue();
     }
 
     [Test]
-    public void IsGood_VerifiedNotReArchived_ReturnsFalse()
+    public void IsGood_VerifiedWithNoFlags_NotReArchived_ReturnsTrue()
     {
         MatchResult result = new MatchResult
         {
             Game = new Game(),
             Status = MatchStatus.Verified,
+            IsReArchived = false,
         };
 
-        result.IsGood.Should().BeFalse();
+        result.IsGood.Should().BeTrue();
     }
 
     [Test]
@@ -40,49 +40,45 @@ public sealed class MatchResultTests
         {
             Game = new Game(),
             Status = MatchStatus.Missing,
-            IsReArchived = true,
         };
 
         result.IsGood.Should().BeFalse();
     }
 
     [Test]
-    public void IsGood_VerifiedReArchivedAndUntrimmed_ReturnsFalse()
+    public void IsGood_VerifiedAndUntrimmed_ReturnsFalse()
     {
         MatchResult result = new MatchResult
         {
             Game = new Game(),
             Status = MatchStatus.Verified,
             IsUntrimmed = true,
-            IsReArchived = true,
         };
 
         result.IsGood.Should().BeFalse();
     }
 
     [Test]
-    public void IsGood_VerifiedReArchivedAndWrongArchiveType_ReturnsFalse()
+    public void IsGood_VerifiedAndWrongArchiveType_ReturnsFalse()
     {
         MatchResult result = new MatchResult
         {
             Game = new Game(),
             Status = MatchStatus.Verified,
             IsWrongArchiveType = true,
-            IsReArchived = true,
         };
 
         result.IsGood.Should().BeFalse();
     }
 
     [Test]
-    public void IsGood_VerifiedReArchivedAndIncorrectlyNamed_ReturnsFalse()
+    public void IsGood_VerifiedAndIncorrectlyNamed_ReturnsFalse()
     {
         MatchResult result = new MatchResult
         {
             Game = new Game(),
             Status = MatchStatus.Verified,
             IsIncorrectlyNamed = true,
-            IsReArchived = true,
         };
 
         result.IsGood.Should().BeFalse();

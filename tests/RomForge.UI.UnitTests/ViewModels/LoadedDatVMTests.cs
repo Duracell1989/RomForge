@@ -220,6 +220,15 @@ public class LoadedDatVMTests
     }
 
     [Test]
+    public void StatusSummary_PreparedGameNoReArchived_CountsAsGood()
+    {
+        LoadedDatVM vm = new LoadedDatVM(MakeDat(), "/test/dat.xml");
+        vm.Games.Add(MakeRow(new MatchResult { Game = new Game(), Status = MatchStatus.Verified }));
+
+        vm.StatusSummary.Should().Contain("1 good");
+    }
+
+    [Test]
     public void StatusSummary_MixedFlags_CountsMutuallyExclusive()
     {
         // A game that is both Untrimmed AND WrongArchiveType should count only as untrimmed.

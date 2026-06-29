@@ -776,7 +776,7 @@ public partial class MainWindowVM : VMBase
         && !IsTrimming
         && SelectedGame?.Status == MatchStatus.Verified
         && !SelectedGame.IsUntrimmed
-        && !SelectedGame.IsReArchived
+        && !SelectedGame.IsGood
         && _compressor.IsAvailable;
 
     [RelayCommand(CanExecute = nameof(CanReArchiveAll))]
@@ -786,7 +786,7 @@ public partial class MainWindowVM : VMBase
             return;
 
         List<GameRowVM> targets = ActiveDat
-            .Games.Where(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed && !g.IsReArchived)
+            .Games.Where(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed && !g.IsGood)
             .ToList();
 
         if (targets.Count == 0)
@@ -907,13 +907,12 @@ public partial class MainWindowVM : VMBase
         return errors;
     }
 
-    private bool CanReArchiveAll()
- =>
+    private bool CanReArchiveAll() =>
         !IsReArchiving
         && !IsTrimming
         && _compressor.IsAvailable
         && ActiveDat is not null
-        && ActiveDat.Games.Any(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed && !g.IsReArchived);
+        && ActiveDat.Games.Any(g => g.Status == MatchStatus.Verified && !g.IsUntrimmed && !g.IsGood);
 
     [RelayCommand(CanExecute = nameof(CanTrim))]
     private async Task TrimSelectedAsync()
