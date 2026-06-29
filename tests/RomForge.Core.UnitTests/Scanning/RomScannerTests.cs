@@ -385,6 +385,37 @@ public class RomScannerTests
     }
 
     [Test]
+    public async Task ScanAsync_PartialCacheHits_CrcProgressTotalReflectsMissCountOnly()
+    {
+        byte[] content = [0x01, 0x02];
+        long size = content.Length;
+        DateTime lastModified = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        uint cachedCrc = 0xDEADBEEF;
+
+        IRomSource source = StubSource([
+            new RomContent { FilePath = "/roms/a.gba", FileExtension = "gba", RomExtension = "gba", FileSize = size, LastModified = lastModified, OpenStreamAsync = _ => new ValueTask<Stream>(new MemoryStream(content)) },
+            new RomContent { FilePath = "/roms/b.gba", FileExtension = "gba", RomExtension = "gba", FileSize = size, LastModified = lastModified, OpenStreamAsync = _ => new ValueTask<Stream>(new MemoryStream(content)) },
+            new RomContent { FilePath = "/roms/c.gba", FileExtension = "gba", RomExtension = "gba", FileSize = size, LastModified = lastModified, OpenStreamAsync = _ => new ValueTask<Stream>(new MemoryStream(content)) },
+        ]);
+
+        Mock<IRomScanCache> cacheMock = new Mock<IRomScanCache>();
+        cacheMock.Setup(c => c.GetCrc("/roms/a.gba", size, lastModified)).Returns(cachedCrc);
+        cacheMock.Setup(c => c.GetCrc("/roms/b.gba", size, lastModified)).Returns(cachedCrc);
+        cacheMock.Setup(c => c.GetCrc("/roms/c.gba", size, lastModified)).Returns((uint?)null);
+        cacheMock.Setup(c => c.GetTrimmedCrc(It.IsAny<string>(), It.IsAny<long>(), It.IsAny<DateTime>())).Returns((uint?)null);
+
+        List<ScanProgress> reports = [];
+        IProgress<ScanProgress> progress = new SyncProgress<ScanProgress>(p => reports.Add(p));
+
+        await RomScanner.ScanAsync(source, "/roms", cacheMock.Object, progress);
+
+        List<ScanProgress> crcReports = reports.Where(p => p.Phase == "Computing CRCs...").ToList();
+        crcReports.Should().NotBeEmpty();
+        crcReports.Should().AllSatisfy(p => p.Total.Should().Be(1), "only 1 of 3 files is a cache miss");
+        crcReports.Should().Contain(p => p.Completed == 1, "the single miss must be reported as completed");
+    }
+
+    [Test]
     public void ComputeCrcs_TrailingZeroFF_ReturnsDifferentTrimmedCrc()
     {
         byte[] data = [0xDE, 0xAD, 0xBE, 0xFF, 0xFF];

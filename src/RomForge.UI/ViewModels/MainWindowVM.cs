@@ -434,6 +434,7 @@ public partial class MainWindowVM : VMBase
         catch (OperationCanceledException ex)
         {
             _logger.Information(ex, "Scan cancelled");
+            await cache.SaveAsync();
             return;
         }
 
