@@ -42,7 +42,7 @@ jobs:
       # It assembles artifacts/RomForge.app and chmod +x the binary.
 
       - name: Import signing certificate
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: secrets.MACOS_CERT_P12 != ''
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -56,7 +56,7 @@ jobs:
           rm /tmp/cert.p12
 
       - name: Sign .app
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: secrets.MACOS_CERT_P12 != ''
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -86,7 +86,7 @@ jobs:
             "artifacts/dmg-staging"
 
       - name: Sign DMG
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: secrets.MACOS_CERT_P12 != ''
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -95,7 +95,7 @@ jobs:
             "RomForge-macOS-arm64.dmg"
 
       - name: Notarize DMG
-        if: ${{ secrets.APPLE_ID != '' }}
+        if: secrets.APPLE_ID != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -108,7 +108,7 @@ jobs:
             --wait
 
       - name: Staple DMG
-        if: ${{ secrets.APPLE_ID != '' }}
+        if: secrets.APPLE_ID != ''
         run: xcrun stapler staple "RomForge-macOS-arm64.dmg"
 
       - uses: actions/upload-artifact@v4
