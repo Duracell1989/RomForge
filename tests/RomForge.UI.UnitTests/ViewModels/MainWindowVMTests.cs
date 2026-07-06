@@ -937,7 +937,8 @@ public sealed class MainWindowVMTests
     private static GameRowVM MakeGameRowWithScannedRom(
         string filePath,
         bool incorrectlyNamed = false,
-        bool wrongArchiveType = false
+        bool wrongArchiveType = false,
+        bool untrimmed = false
     ) =>
         new GameRowVM(
             new MatchResult
@@ -946,6 +947,7 @@ public sealed class MainWindowVMTests
                 Status = MatchStatus.Verified,
                 IsIncorrectlyNamed = incorrectlyNamed,
                 IsWrongArchiveType = wrongArchiveType,
+                IsUntrimmed = untrimmed,
                 ScannedRom = new ScannedRom
                 {
                     FilePath = filePath,
@@ -956,6 +958,31 @@ public sealed class MainWindowVMTests
             new DatHeader(),
             []
         );
+
+    // --- RemoveDat command ---
+
+    [Test]
+    public void RemoveDatCommand_WhenOneDatLoaded_RemovesDatAndClearsActiveDat()
+    {
+        LoadedDatVM datVm = MakeDatVM();
+        _vm.LoadedDats.Add(datVm);
+        _vm.ActiveDat = datVm;
+
+        _vm.RemoveDatCommand.Execute(null);
+
+        _vm.LoadedDats.Should().BeEmpty();
+        _vm.ActiveDat.Should().BeNull();
+    }
+
+    // --- OnArchiveFormatChanged ---
+
+    [Test]
+    public void OnArchiveFormatChanged_WhenActiveDatSet_UpdatesConfigAsync()
+    {
+        _vm.ActiveDat = MakeDatVM();
+        _vm.ArchiveFormat = "zip";
+        _vm.ArchiveFormat.Should().Be("zip");
+    }
 
     // --- TrimAll command CanExecute ---
 
@@ -1106,6 +1133,114 @@ public sealed class MainWindowVMTests
             n => n.NotifyErrorAsync(It.Is<string>(s => s.Contains("compression failed"))),
             Times.Once
         );
+    }
+
+    // --- TrimSelectedAsync ---
+
+    [Test]
+    public async Task TrimSelectedAsync_WhenExtractFails_NotifiesError()
+    {
+        _compressor.Setup(c => c.IsAvailable).Returns(true);
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Fail("extract failed"));
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.7z", untrimmed: true);
+        datVm.Games.Add(gameRow);
+        _vm.ActiveDat = datVm;
+        _vm.SelectedGame = gameRow;
+
+        await _vm.TrimSelectedCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.NotifyErrorAsync(It.Is<string>(s => s.Contains("extract failed"))),
+            Times.Once
+        );
+    }
+
+    // --- RenameAllAsync ---
+
+    [Test]
+    public async Task RenameAllAsync_WhenRenameFails_NotifiesError()
+    {
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(Result.Fail("rename failed"));
+
+        LoadedDatVM datVm = MakeDatVMWithRomTitle();
+        GameRowVM gameRow = MakeGameRowWithScannedRom(
+            "/roms/Wrong Name.7z",
+            incorrectlyNamed: true
+        );
+        datVm.Games.Add(gameRow);
+        _vm.ActiveDat = datVm;
+
+        await _vm.RenameAllCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.NotifyErrorAsync(It.Is<string>(s => s.Contains("rename failed"))),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task RenameAllAsync_WhenRenameSucceeds_ReplacesGameRowInActiveDat()
+    {
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(Result.Ok());
+
+        LoadedDatVM datVm = MakeDatVMWithRomTitle();
+        GameRowVM gameRow = MakeGameRowWithScannedRom(
+            "/roms/Wrong Name.7z",
+            incorrectlyNamed: true
+        );
+        datVm.Games.Add(gameRow);
+        _vm.ActiveDat = datVm;
+
+        await _vm.RenameAllCommand.ExecuteAsync(null);
+
+        datVm.Games[0].Should().NotBeSameAs(gameRow);
+        datVm.Games[0].IsIncorrectlyNamed.Should().BeFalse();
+    }
+
+    // --- ReArchiveSelectedAsync success ---
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenSucceeds_UpdatesGameRowInActiveDat()
+    {
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .ReturnsAsync(Result.Ok());
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted_file.rom"));
+        _fileOps.Setup(f => f.DeleteAsync(It.IsAny<string>())).ReturnsAsync(Result.Ok());
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        datVm.Games[0].Should().NotBeSameAs(gameRow);
+        datVm.Games[0].IsWrongArchiveType.Should().BeFalse();
     }
 
     [Test]
