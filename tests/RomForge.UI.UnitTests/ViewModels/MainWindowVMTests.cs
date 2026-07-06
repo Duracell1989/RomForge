@@ -924,6 +924,190 @@ public sealed class MainWindowVMTests
 
     // --- ValidateIntegrityAsync — triggered via BuildDatVmAsync when persisted results exist ---
 
+    private static LoadedDatVM MakeDatVMWithRomTitle(string romTitle = "%n") =>
+        new LoadedDatVM(
+            new DatFile
+            {
+                Header = new DatHeader { DatName = "Test DAT", RomTitle = romTitle },
+                Games = [],
+            },
+            "/test/dat.xml"
+        );
+
+    private static GameRowVM MakeGameRowWithScannedRom(
+        string filePath,
+        bool incorrectlyNamed = false,
+        bool wrongArchiveType = false
+    ) =>
+        new GameRowVM(
+            new MatchResult
+            {
+                Game = new Game { Title = "Test Game" },
+                Status = MatchStatus.Verified,
+                IsIncorrectlyNamed = incorrectlyNamed,
+                IsWrongArchiveType = wrongArchiveType,
+                ScannedRom = new ScannedRom
+                {
+                    FilePath = filePath,
+                    FileExtension = Path.GetExtension(filePath).TrimStart('.'),
+                },
+            },
+            string.Empty,
+            new DatHeader(),
+            []
+        );
+
+    // --- TrimAll command CanExecute ---
+
+    [Test]
+    public void TrimAllCommand_CannotExecute_WhenNoDatLoaded() =>
+        _vm.TrimAllCommand.CanExecute(null).Should().BeFalse();
+
+    [Test]
+    public void TrimAllCommand_CannotExecute_WhenNoUntrimmedGames()
+    {
+        _vm.ActiveDat = MakeDatVM();
+        _vm.ActiveDat.Games.Add(MakeGameRow());
+        _vm.TrimAllCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Test]
+    public void TrimAllCommand_CannotExecute_WhenCompressorUnavailable()
+    {
+        _vm.ActiveDat = MakeDatVM();
+        _vm.ActiveDat.Games.Add(MakeGameRow(untrimmed: true));
+        _vm.TrimAllCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Test]
+    public void TrimAllCommand_CanExecute_WhenDatHasUntrimmedGamesAndCompressorAvailable()
+    {
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+        vm.ActiveDat = MakeDatVM();
+        vm.ActiveDat.Games.Add(MakeGameRow(untrimmed: true));
+        vm.TrimAllCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    // --- OnActiveDatGamesChanged ---
+
+    [Test]
+    public void OnActiveDatGamesChanged_WhenGameAddedToActiveDat_RaisesCanExecuteChangedOnCommands()
+    {
+        LoadedDatVM datVm = MakeDatVM();
+        _vm.ActiveDat = datVm;
+        bool commandNotified = false;
+        _vm.RenameAllCommand.CanExecuteChanged += (_, _) => commandNotified = true;
+
+        datVm.Games.Add(MakeGameRow(incorrectlyNamed: true));
+
+        commandNotified.Should().BeTrue();
+    }
+
+    // --- RenameSelectedAsync success ---
+
+    [Test]
+    public async Task RenameSelectedAsync_WhenRenameSucceeds_ReplacesGameRowInActiveDat()
+    {
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(Result.Ok());
+
+        LoadedDatVM datVm = MakeDatVMWithRomTitle();
+        GameRowVM gameRow = MakeGameRowWithScannedRom(
+            "/roms/Wrong Name.7z",
+            incorrectlyNamed: true
+        );
+        datVm.Games.Add(gameRow);
+        _vm.ActiveDat = datVm;
+        _vm.SelectedGame = gameRow;
+
+        await _vm.RenameSelectedCommand.ExecuteAsync(null);
+
+        datVm.Games[0].Should().NotBeSameAs(gameRow);
+    }
+
+    // --- ScanFolderAsync with games in DAT ---
+
+    [Test]
+    public async Task ScanFolderAsync_WithDatHavingGames_SetsGamesMissingOnEmptyRomSource()
+    {
+        LoadedDatVM datVm = new LoadedDatVM(
+            new DatFile
+            {
+                Header = new DatHeader { DatName = "Test DAT" },
+                Games = [new Game { Title = "Test Game", ReleaseNumber = 1 }],
+            },
+            "/test/dat.xml"
+        );
+        _vm.ActiveDat = datVm;
+        _fileDialogs.Setup(d => d.PickRomFolderAsync()).ReturnsAsync("/roms/gba");
+        _notifier
+            .Setup(n =>
+                n.ShowProgressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<ProgressWindowVM>(),
+                    It.IsAny<Task>()
+                )
+            )
+            .Returns<string, ProgressWindowVM, Task>((_, _, task) => task);
+
+        await _vm.ScanFolderCommand.ExecuteAsync(null);
+
+        datVm.Games.Should().HaveCount(1);
+        datVm.Games[0].Status.Should().Be(MatchStatus.Missing);
+    }
+
+    // --- ReArchiveSelectedAsync failure path (covers ReArchiveFileAsync + OnIsReArchivingChanged) ---
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenCompressFails_NotifiesError()
+    {
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .ReturnsAsync(Result.Fail("compression failed"));
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted_file.rom"));
+
+        _notifier
+            .Setup(n =>
+                n.ShowProgressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<ProgressWindowVM>(),
+                    It.IsAny<Task>()
+                )
+            )
+            .Returns<string, ProgressWindowVM, Task>((_, _, task) => task);
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.NotifyErrorAsync(It.Is<string>(s => s.Contains("compression failed"))),
+            Times.Once
+        );
+    }
+
     [Test]
     [NonParallelizable]
     public async Task LoadManagedDatsAsync_WhenPersistedResultsHaveStaleFile_ClearsStaleGame()
