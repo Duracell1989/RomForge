@@ -55,7 +55,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "build" build.keychain
           rm /tmp/cert.p12
           # Developer ID G2 intermediate — lets codesign build the full chain to Apple's root
-          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o /tmp/devidg2.der
+          curl --proto '=https' --tlsv1.2 -fsS https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o /tmp/devidg2.der
           security import /tmp/devidg2.der -k build.keychain
           rm /tmp/devidg2.der
 
