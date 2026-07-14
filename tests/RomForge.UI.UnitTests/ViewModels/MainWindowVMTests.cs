@@ -1583,7 +1583,136 @@ public sealed class MainWindowVMTests
         );
     }
 
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenOperationThrowsUnexpectedly_NotifiesError()
+    {
+        // A non-cancellation exception thrown mid-operation must be caught and
+        // surfaced as an error rather than crashing the app.
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("boom"));
+
+        _notifier
+            .Setup(n =>
+                n.ShowProgressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<ProgressWindowVM>(),
+                    It.IsAny<Task>()
+                )
+            )
+            .Returns<string, ProgressWindowVM, Task>((_, _, task) => task);
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        Func<Task> act = async () => await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        await act.Should().NotThrowAsync();
+        _notifier.Verify(
+            n =>
+                n.NotifyErrorAsync(
+                    It.Is<string>(s => s.Contains("Re-archive failed unexpectedly"))
+                ),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenInPlaceCompressFails_CleansUpLeftoverTempArchive()
+    {
+        // In-place re-archive whose temp archive was partially written before the
+        // compress failed: the finally block must delete the leftover temp file
+        // while leaving the still-intact original untouched.
+        string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string original = Path.Combine(dir, "Test.7z");
+            string tempArchive = original + ".romforge-tmp";
+            await File.WriteAllBytesAsync(tempArchive, new byte[] { 1, 2, 3 });
+
+            Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+            availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+            availableCompressor
+                .Setup(c =>
+                    c.CompressAsync(
+                        It.IsAny<string>(),
+                        It.IsAny<string>(),
+                        It.IsAny<long>(),
+                        It.IsAny<IProgress<int>?>(),
+                        It.IsAny<string>(),
+                        It.IsAny<CancellationToken>()
+                    )
+                )
+                .ReturnsAsync(Result.Fail("compression failed"));
+            MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+            _extractor
+                .Setup(e =>
+                    e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())
+                )
+                .ReturnsAsync(Result.Ok("/tmp/no_such_extracted.rom"));
+            _fileOps.Setup(f => f.DeleteAsync(It.IsAny<string>())).ReturnsAsync(Result.Ok());
+
+            _notifier
+                .Setup(n =>
+                    n.ShowProgressAsync(
+                        It.IsAny<string>(),
+                        It.IsAny<ProgressWindowVM>(),
+                        It.IsAny<Task>()
+                    )
+                )
+                .Returns<string, ProgressWindowVM, Task>((_, _, task) => task);
+
+            LoadedDatVM datVm = MakeDatVM();
+            GameRowVM gameRow = MakeGameRowWithScannedRom(original, wrongArchiveType: true);
+            datVm.Games.Add(gameRow);
+            vm.ActiveDat = datVm;
+            vm.SelectedGame = gameRow;
+
+            await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+            _fileOps.Verify(f => f.DeleteAsync(tempArchive), Times.Once);
+            _fileOps.Verify(f => f.DeleteAsync(original), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     // --- ReArchiveAllAsync ---
+
+    [Test]
+    public async Task ReArchiveAllAsync_WhenCancelledMidRun_DoesNotNotifyError()
+    {
+        // A cancellation surfacing from inside the batch loop must propagate as an
+        // OperationCanceledException (not be treated as an unexpected failure) and
+        // reach the app quietly without notifying an error.
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        LoadedDatVM datVm = MakeDatVM();
+        datVm.Games.Add(MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true));
+        vm.ActiveDat = datVm;
+
+        Func<Task> act = async () => await vm.ReArchiveAllCommand.ExecuteAsync(null);
+
+        await act.Should().NotThrowAsync();
+        _notifier.Verify(n => n.NotifyErrorAsync(It.IsAny<string>()), Times.Never);
+    }
 
     [Test]
     public async Task ReArchiveAllAsync_WhenExtractFails_NotifiesErrors()
