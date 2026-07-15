@@ -37,6 +37,8 @@ public sealed class MainWindowVMTests
     private Mock<IImageDownloader> _imageDownloader = null!;
     private Mock<IAppLifetime> _appLifetime = null!;
     private Mock<IRomSource> _romSource = null!;
+    private Mock<IReleaseChecker> _releaseChecker = null!;
+    private Mock<IUrlLauncher> _urlLauncher = null!;
 
     [SetUp]
     public void SetUp()
@@ -57,6 +59,12 @@ public sealed class MainWindowVMTests
         _romSource
             .Setup(s => s.EnumerateAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(EmptyRomSourceAsync());
+        _releaseChecker = new Mock<IReleaseChecker>();
+        // Default: the startup update check silently fails (no network), so it never notifies.
+        _releaseChecker
+            .Setup(c => c.FetchLatestReleaseAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Fail<ReleaseInfo>("no network"));
+        _urlLauncher = new Mock<IUrlLauncher>();
         _vm = MakeVM();
     }
 
@@ -80,6 +88,8 @@ public sealed class MainWindowVMTests
             compressorMock?.Object ?? _compressor.Object,
             _extractor.Object,
             _notifier.Object,
+            _urlLauncher.Object,
+            new UpdateCheckService(_releaseChecker.Object, logger, "1.0.0"),
             logger,
             appData,
             _datImporter.Object,
@@ -137,6 +147,20 @@ public sealed class MainWindowVMTests
                     NewDatVersionUrl = "https://example.com/version.txt",
                     NewDatUrl = "https://example.com/dat.zip",
                     DatVersion = 0,
+                },
+                Games = [],
+            },
+            "/test/dat.xml"
+        );
+
+    private static LoadedDatVM MakeDatVMWithImageUrl() =>
+        new LoadedDatVM(
+            new DatFile
+            {
+                Header = new DatHeader
+                {
+                    DatName = "Test DAT",
+                    NewImUrl = "https://example.com/imgs/",
                 },
                 Games = [],
             },
@@ -546,6 +570,63 @@ public sealed class MainWindowVMTests
         _vm.CheckDatUpdateCommand.CanExecute(null).Should().BeTrue();
     }
 
+    // --- DownloadImagesAsync ---
+
+    [Test]
+    public void DownloadImagesCommand_CannotExecute_WhenNoDatLoaded()
+    {
+        _vm.ActiveDat = null;
+
+        _vm.DownloadImagesCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Test]
+    public void DownloadImagesCommand_CannotExecute_WhenDatHasNoImageUrl()
+    {
+        _vm.ActiveDat = MakeDatVM();
+
+        _vm.DownloadImagesCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Test]
+    public void DownloadImagesCommand_CanExecute_WhenDatHasImageUrl()
+    {
+        _vm.ActiveDat = MakeDatVMWithImageUrl();
+
+        _vm.DownloadImagesCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task DownloadImages_WhenDatHasImageUrl_ShowsImageDownloadWindow()
+    {
+        _vm.ActiveDat = MakeDatVMWithImageUrl();
+        _notifier
+            .Setup(n =>
+                n.ShowImageDownloadAsync(It.IsAny<ImageDownloadWindowVM>(), It.IsAny<Task>())
+            )
+            .Returns<ImageDownloadWindowVM, Task>((_, task) => task);
+
+        await _vm.DownloadImagesCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.ShowImageDownloadAsync(It.IsAny<ImageDownloadWindowVM>(), It.IsAny<Task>()),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task DownloadImages_WhenDatHasNoImageUrl_DoesNotShowWindow()
+    {
+        _vm.ActiveDat = MakeDatVM(); // no image URL
+
+        await _vm.DownloadImagesCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.ShowImageDownloadAsync(It.IsAny<ImageDownloadWindowVM>(), It.IsAny<Task>()),
+            Times.Never
+        );
+    }
+
     // --- RemoveDat ---
 
     [Test]
@@ -599,6 +680,65 @@ public sealed class MainWindowVMTests
         _vm.QuitCommand.Execute(null);
 
         _appLifetime.Verify(a => a.Shutdown(), Times.Once);
+    }
+
+    // --- CheckForUpdatesAsync ---
+
+    private void SetupLatestRelease(string tag) =>
+        _releaseChecker
+            .Setup(c => c.FetchLatestReleaseAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+                Result.Ok(new ReleaseInfo(tag, $"https://example.com/releases/tag/{tag}"))
+            );
+
+    [Test]
+    public async Task CheckForUpdates_WhenNewerReleaseAndConfirmed_OpensReleasePage()
+    {
+        // Current version is "1.0.0" (see MakeVM)
+        SetupLatestRelease("v2.0.0");
+        _notifier
+            .Setup(n => n.ConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(true);
+
+        await _vm.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        _urlLauncher.Verify(
+            l => l.OpenUrlAsync("https://example.com/releases/tag/v2.0.0"),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task CheckForUpdates_WhenNewerReleaseButDeclined_DoesNotOpenPage()
+    {
+        SetupLatestRelease("v2.0.0");
+        _notifier
+            .Setup(n => n.ConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(false);
+
+        await _vm.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        _urlLauncher.Verify(l => l.OpenUrlAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Test]
+    public async Task CheckForUpdates_WhenUpToDate_NotifiesInfo()
+    {
+        SetupLatestRelease("v1.0.0"); // same as current
+
+        await _vm.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        _notifier.Verify(n => n.NotifyInfoAsync(It.IsAny<string>()), Times.Once);
+        _urlLauncher.Verify(l => l.OpenUrlAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Test]
+    public async Task CheckForUpdates_WhenCheckFails_NotifiesError()
+    {
+        // Default mock returns a failed result.
+        await _vm.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        _notifier.Verify(n => n.NotifyErrorAsync(It.IsAny<string>()), Times.Once);
     }
 
     // --- ImportDatAsync ---
@@ -875,6 +1015,58 @@ public sealed class MainWindowVMTests
         await _vm.CheckDatUpdateCommand.ExecuteAsync(null);
 
         _notifier.Verify(n => n.NotifyErrorAsync(It.IsAny<string>()), Times.Once);
+    }
+
+    [Test]
+    public async Task CheckDatUpdateAsync_WhenUpdateSucceedsAndReloadedDatHasImageUrl_ShowsImageDownload()
+    {
+        _vm.ActiveDat = MakeDatVMWithUpdateUrl(); // DatVersion = 0
+        _updateChecker
+            .Setup(u =>
+                u.FetchLatestVersionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())
+            )
+            .ReturnsAsync(Result.Ok("1")); // newer
+        _notifier
+            .Setup(n => n.ConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(true);
+        _downloader
+            .Setup(d =>
+                d.DownloadDatAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<string?>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .ReturnsAsync(Result.Ok("/managed/updated.dat"));
+        _datReader
+            .Setup(r => r.ReadAsync())
+            .ReturnsAsync(
+                Result.Ok(
+                    new DatFile
+                    {
+                        Header = new DatHeader
+                        {
+                            DatName = "Test DAT",
+                            NewImUrl = "https://example.com/imgs/",
+                        },
+                        Games = [],
+                    }
+                )
+            );
+        _notifier
+            .Setup(n =>
+                n.ShowImageDownloadAsync(It.IsAny<ImageDownloadWindowVM>(), It.IsAny<Task>())
+            )
+            .Returns<ImageDownloadWindowVM, Task>((_, task) => task);
+
+        await _vm.CheckDatUpdateCommand.ExecuteAsync(null);
+
+        _notifier.Verify(
+            n => n.ShowImageDownloadAsync(It.IsAny<ImageDownloadWindowVM>(), It.IsAny<Task>()),
+            Times.Once
+        );
     }
 
     // --- RenameAllAsync ---

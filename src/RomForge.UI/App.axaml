@@ -34,6 +34,14 @@
                 <NativeMenuItem.Menu>
                     <NativeMenu>
                         <NativeMenuItem Header="Check for Update" Command="{Binding CheckDatUpdateCommand}"/>
+                        <NativeMenuItem Header="Download Missing Images" Command="{Binding DownloadImagesCommand}"/>
+                    </NativeMenu>
+                </NativeMenuItem.Menu>
+            </NativeMenuItem>
+            <NativeMenuItem Header="Help">
+                <NativeMenuItem.Menu>
+                    <NativeMenu>
+                        <NativeMenuItem Header="Check for Updates…" Command="{Binding CheckForUpdatesCommand}"/>
                     </NativeMenu>
                 </NativeMenuItem.Menu>
             </NativeMenuItem>
