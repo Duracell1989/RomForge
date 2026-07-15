@@ -4,6 +4,24 @@ All notable changes to RomForge are documented here. This project follows [Seman
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-15
+
+### Added
+
+- In-app update check: RomForge now checks GitHub for a newer release at startup and lets you know when an update is available
+- A DAT menu command to download any missing box-art on demand, with a live "X of Y" progress log you can cancel
+
+### Changed
+
+- Updated the Avalonia UI toolkit to 12.1.0 and set the application name shown in the macOS menu bar
+
+### Fixed
+
+- Cancelling a re-archive no longer crashes the app
+- Re-archiving now replaces a stale destination archive instead of appending to it, closing a path that could silently corrupt a ROM
+- Preferences writes are serialized, so two settings changes in quick succession can no longer overwrite each other and lose a setting
+- Hardened the re-archive status database against concurrent-write races that could drop a persisted re-archive mark
+
 ## [1.1.0] — 2026-07-14
 
 ### Added
