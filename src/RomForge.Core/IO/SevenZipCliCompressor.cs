@@ -48,6 +48,25 @@ public sealed class SevenZipCliCompressor : IArchiveCompressor
                 "7-Zip binary not found. Install 7-Zip (macOS: brew install 7-zip)."
             );
 
+        // 7-Zip's "a" command adds to an existing archive rather than replacing it. A stale or
+        // partial file at the destination (e.g. left behind when the app was killed mid-compress)
+        // would be appended to, silently corrupting the output. Remove it first so we always
+        // write a fresh archive.
+        if (File.Exists(destArchive))
+        {
+            try
+            {
+                File.Delete(destArchive);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Error(ex, "Could not remove existing archive {Dest}", destArchive);
+                return Result.Fail(
+                    $"Could not replace existing archive {Path.GetFileName(destArchive)}: {ex.Message}"
+                );
+            }
+        }
+
         var totalRam = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         var dictMb = ComputeDictionaryMb(romSize, totalRam);
         _logger.Debug(
