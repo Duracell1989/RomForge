@@ -69,10 +69,27 @@ public sealed class MainWindowVMTests
     }
 
     [TearDown]
-    public void TearDown()
+    public void TearDown() => DeleteDirectoryWithRetry(_tempDir);
+
+    private static void DeleteDirectoryWithRetry(string dir)
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        // The VM persists the last-active DAT fire-and-forget, so a preferences write may still be
+        // landing in the temp dir as the test ends. Retry briefly rather than failing the test on
+        // that benign race; still surface a genuinely stuck write after the retries are exhausted.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+                return;
+            }
+            catch (Exception ex)
+                when (ex is IOException or UnauthorizedAccessException && attempt < 20)
+            {
+                Thread.Sleep(25);
+            }
+        }
     }
 
     private MainWindowVM MakeVM(Mock<IArchiveCompressor>? compressorMock = null)
