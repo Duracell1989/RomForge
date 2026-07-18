@@ -3,7 +3,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using MsBox.Avalonia;
+using MsBox.Avalonia.Dto;
 using MsBox.Avalonia.Enums;
+using MsBox.Avalonia.Models;
 using RomForge.UI.ViewModels;
 using RomForge.UI.Views;
 
@@ -11,6 +13,8 @@ namespace RomForge.UI.Services;
 
 internal sealed class AvaloniaUserNotifier : IUserNotifier
 {
+    private const string ViewOnGitHubButton = "View on GitHub";
+
     private readonly Func<Window?> _getWindow;
 
     public AvaloniaUserNotifier(Func<Window?> getWindow)
@@ -51,6 +55,37 @@ internal sealed class AvaloniaUserNotifier : IUserNotifier
             .ShowWindowDialogAsync(window);
 
         return result == ButtonResult.Yes;
+    }
+
+    public async Task<bool> ShowAboutAsync(string message)
+    {
+        var window = _getWindow();
+        if (window is null)
+            return false;
+
+        string result = await MessageBoxManager
+            .GetMessageBoxCustom(
+                new MessageBoxCustomParams
+                {
+                    ContentTitle = "About RomForge",
+                    ContentMessage = message,
+                    Icon = Icon.Info,
+                    ButtonDefinitions =
+                    [
+                        new ButtonDefinition { Name = ViewOnGitHubButton },
+                        new ButtonDefinition
+                        {
+                            Name = "Close",
+                            IsDefault = true,
+                            IsCancel = true,
+                        },
+                    ],
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                }
+            )
+            .ShowWindowDialogAsync(window);
+
+        return result == ViewOnGitHubButton;
     }
 
     public async Task ShowProgressAsync(string title, ProgressWindowVM vm, Task operationTask)

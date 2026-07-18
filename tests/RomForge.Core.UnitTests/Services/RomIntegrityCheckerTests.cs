@@ -40,7 +40,10 @@ public sealed class RomIntegrityCheckerTests
             {
                 Game = new Game { ReleaseNumber = 1 },
                 Status = MatchStatus.Verified,
-                ScannedRom = new ScannedRom { FilePath = Path.Combine(Path.GetTempPath(), "romforge_nonexistent_test.zip") },
+                ScannedRom = new ScannedRom
+                {
+                    FilePath = Path.Combine(Path.GetTempPath(), "romforge_nonexistent_test.zip"),
+                },
             },
         ];
 
@@ -48,6 +51,34 @@ public sealed class RomIntegrityCheckerTests
 
         stale.Should().HaveCount(1);
         stale[0].Game.ReleaseNumber.Should().Be(1);
+    }
+
+    [Test]
+    public void FindStaleResults_FileMissingAndParentDirMissing_NotStale()
+    {
+        // Simulates an unmounted external volume: the file is gone only because its
+        // whole containing directory is gone. This must NOT be reported as stale,
+        // otherwise the caller wipes good scan results when the drive is offline.
+        string offlinePath = Path.Combine(
+            Path.GetTempPath(),
+            "romforge_offline_volume_" + System.Guid.NewGuid().ToString("N"),
+            "roms",
+            "game.7z"
+        );
+
+        IReadOnlyList<MatchResult> results =
+        [
+            new MatchResult
+            {
+                Game = new Game { ReleaseNumber = 1 },
+                Status = MatchStatus.Verified,
+                ScannedRom = new ScannedRom { FilePath = offlinePath },
+            },
+        ];
+
+        IReadOnlyList<MatchResult> stale = RomIntegrityChecker.FindStaleResults(results);
+
+        stale.Should().BeEmpty();
     }
 
     [Test]

@@ -91,6 +91,25 @@ public sealed class JsonRomScanCacheTests
         cache.GetCrc("/roms/game.gba", 100L, Utc(2024, 1, 1)).Should().BeNull();
     }
 
+    [Test]
+    public async Task SaveAsync_RealFileTickPrecisionMtime_RoundTripsAndHits()
+    {
+        string romPath = Path.Combine(_tempDir, "game.gba");
+        await File.WriteAllBytesAsync(romPath, [0x01, 0x02, 0x03, 0x04]);
+        FileInfo info = new FileInfo(romPath);
+        long size = info.Length;
+        DateTime mtime = info.LastWriteTimeUtc;
+
+        string path = CachePath();
+        JsonRomScanCache cache = new JsonRomScanCache(path);
+        cache.Set(romPath, size, mtime, 0xCAFEF00D);
+        await cache.SaveAsync();
+
+        JsonRomScanCache reloaded = new JsonRomScanCache(path);
+        DateTime reread = new FileInfo(romPath).LastWriteTimeUtc;
+        reloaded.GetCrc(romPath, size, reread).Should().Be(0xCAFEF00D);
+    }
+
     private string CachePath() => Path.Combine(_tempDir, "cache.json");
 
     private static DateTime Utc(int year, int month, int day) =>

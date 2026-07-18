@@ -18,6 +18,11 @@ public sealed class GitHubReleaseChecker : IReleaseChecker
 #pragma warning disable S1075 // URIs should not be hardcoded
     private const string LatestReleaseUrl =
         "https://api.github.com/repos/Duracell1989/RomForge/releases/latest";
+
+    /// <summary>
+    /// Human-facing GitHub Releases page for RomForge (downloads and changelog).
+    /// </summary>
+    public const string ReleasesPageUrl = "https://github.com/Duracell1989/romforge/releases";
 #pragma warning restore S1075
     private const string TagNameProperty = "tag_name";
     private const string HtmlUrlProperty = "html_url";

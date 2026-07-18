@@ -394,6 +394,20 @@ public partial class MainWindowVM : VMBase
     {
         try
         {
+            // If the DAT's ROM folder is not currently available (e.g. the external drive is
+            // unmounted, or has not finished mounting when the app launches), skip the check
+            // entirely. Running it would report every ROM as missing and overwrite the good
+            // persisted results with "Missing", forcing a full re-scan on reconnect.
+            if (datVm.RomFolder is not null && !_fileOperations.DirectoryExists(datVm.RomFolder))
+            {
+                _logger.Information(
+                    "Skipping integrity check for {DatName}: ROM folder {Folder} is not available",
+                    datVm.DatFile.Header.DatName,
+                    datVm.RomFolder
+                );
+                return;
+            }
+
             IReadOnlyList<MatchResult> stale = await Task.Run(() =>
                 RomIntegrityChecker.FindStaleResults(results)
             );
@@ -774,6 +788,63 @@ public partial class MainWindowVM : VMBase
         }
     }
 
+    /// <summary>
+    /// A fresh path for a working archive in the app temp directory. Compression always writes
+    /// here rather than into a ROM folder, so a failed or cancelled operation never leaves a
+    /// partial file next to the user's ROMs. The temp directory is swept on the next launch.
+    /// </summary>
+    private string NewWorkingArchivePath(string format) =>
+        Path.Combine(_appData.TempPath, "rearchive-" + Guid.NewGuid().ToString("N") + "." + format);
+
+    /// <summary>
+    /// Moves a freshly-compressed working archive into its final location, replacing the original
+    /// for an in-place operation. Returns an error message on failure, or <see langword="null"/> on
+    /// success. If placement fails after the original has already been removed, the compressed
+    /// archive is preserved next to the destination (as "&lt;name&gt;.recovered") so the ROM is
+    /// never lost to the auto-swept temp directory.
+    /// </summary>
+    private async Task<string?> PlaceWorkingArchiveAsync(
+        string workingArchive,
+        string fromPath,
+        string toPath
+    )
+    {
+        bool sameFile = fromPath.Equals(toPath, StringComparison.OrdinalIgnoreCase);
+
+        if (sameFile)
+        {
+            Result deleteOriginal = await _fileOperations.DeleteAsync(fromPath);
+            if (deleteOriginal.IsFailed)
+                return $"Could not replace original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}";
+        }
+
+        Result move = await _fileOperations.RenameAsync(workingArchive, toPath);
+        if (move.IsFailed)
+        {
+            // For an in-place operation the original is already gone, so the working archive is
+            // the only remaining copy. Preserve it next to the destination instead of leaving it
+            // in the temp directory, which is swept on the next launch.
+            string recovery = toPath + ".recovered";
+            Result fallback = await _fileOperations.RenameAsync(workingArchive, recovery);
+            string kept = fallback.IsFailed ? workingArchive : recovery;
+            _logger.Error(
+                "Could not place archive at {To}; kept the compressed copy at {Kept}",
+                toPath,
+                kept
+            );
+            return $"Archived but could not place it at {Path.GetFileName(toPath)} ({move.Errors[0].Message}). A copy was kept at:\n{kept}";
+        }
+
+        if (!sameFile)
+        {
+            Result deleteOriginal = await _fileOperations.DeleteAsync(fromPath);
+            if (deleteOriginal.IsFailed)
+                return $"Archived but could not delete original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}";
+        }
+
+        return null;
+    }
+
     private async Task<(MatchResult? Updated, string? Error)> ReArchiveFileAsync(
         GameRowVM game,
         (string From, string To) target,
@@ -799,15 +870,11 @@ public partial class MainWindowVM : VMBase
 
             tempFile = extractResult.Value;
 
-            bool sameFile = target.From.Equals(target.To, StringComparison.OrdinalIgnoreCase);
-
-            // For an in-place re-archive (source and destination are the same path)
-            // compress to a temporary archive first and only swap it in after the
-            // compression succeeds. Deleting the original before the new archive
-            // exists would lose the ROM if compression failed or was cancelled.
-            string compressTarget = sameFile ? target.To + ".romforge-tmp" : target.To;
-            if (sameFile)
-                tempArchive = compressTarget;
+            // Compress to a working archive in the app temp directory, then move it into place.
+            // A partial file from a failed or cancelled compress stays in the temp directory
+            // (swept on the next launch) rather than landing next to the user's ROMs.
+            string compressTarget = NewWorkingArchivePath(archiveFormat);
+            tempArchive = compressTarget;
 
             Result compressResult = await _compressor.CompressAsync(
                 tempFile,
@@ -823,35 +890,16 @@ public partial class MainWindowVM : VMBase
                     $"{Path.GetFileName(target.From)}: {compressResult.Errors[0].Message}"
                 );
 
-            if (sameFile)
-            {
-                Result deleteResult = await _fileOperations.DeleteAsync(target.From);
-                if (deleteResult.IsFailed)
-                    return (
-                        null,
-                        $"Could not replace original: {Path.GetFileName(target.From)}: {deleteResult.Errors[0].Message}"
-                    );
-
-                Result renameResult = await _fileOperations.RenameAsync(compressTarget, target.To);
-                // The original is now gone; the new archive at compressTarget is the
-                // only copy. Regardless of the rename outcome, prevent the finally
-                // block from deleting it — on failure it stays for manual recovery.
-                tempArchive = null;
-                if (renameResult.IsFailed)
-                    return (
-                        null,
-                        $"Archived to {Path.GetFileName(compressTarget)} but could not restore final name {Path.GetFileName(target.To)}: {renameResult.Errors[0].Message}"
-                    );
-            }
-            else
-            {
-                Result deleteResult = await _fileOperations.DeleteAsync(target.From);
-                if (deleteResult.IsFailed)
-                    return (
-                        null,
-                        $"Archived but could not delete original: {Path.GetFileName(target.From)}: {deleteResult.Errors[0].Message}"
-                    );
-            }
+            string? placeError = await PlaceWorkingArchiveAsync(
+                compressTarget,
+                target.From,
+                target.To
+            );
+            // The working archive has now been moved into place or intentionally preserved;
+            // either way the finally must not delete it.
+            tempArchive = null;
+            if (placeError is not null)
+                return (null, $"{Path.GetFileName(target.From)}: {placeError}");
 
             await _reArchiveStore.MarkAsync(datName, game.Game.ReleaseNumber);
 
@@ -1126,10 +1174,8 @@ public partial class MainWindowVM : VMBase
             if (truncateResult.IsFailed)
                 return $"Could not trim ROM.\n{truncateResult.Errors[0].Message}";
 
-            bool samePath = target.From.Equals(target.To, StringComparison.OrdinalIgnoreCase);
-            string archiveDest = samePath ? target.To + ".romforge_tmp" : target.To;
-            if (samePath)
-                tempArchive = archiveDest;
+            string archiveDest = NewWorkingArchivePath(ArchiveFormat);
+            tempArchive = archiveDest;
 
             Progress<int> progressCallback = new Progress<int>(pct => progress.Progress = pct);
             Result compressResult = await _compressor.CompressAsync(
@@ -1143,19 +1189,14 @@ public partial class MainWindowVM : VMBase
             if (compressResult.IsFailed)
                 return $"Compression failed.\n{compressResult.Errors[0].Message}";
 
-            Result deleteResult = await _fileOperations.DeleteAsync(target.From);
-            if (deleteResult.IsFailed)
-                return $"Trim succeeded but the original file could not be deleted.\n{deleteResult.Errors[0].Message}";
-
-            if (samePath)
-            {
-                // The original is gone; the temp archive is now the only copy. Keep it on a
-                // rename failure for manual recovery rather than deleting it in the finally.
-                tempArchive = null;
-                Result renameResult = await _fileOperations.RenameAsync(archiveDest, target.To);
-                if (renameResult.IsFailed)
-                    return $"Trim succeeded but could not rename temp archive.\n{renameResult.Errors[0].Message}";
-            }
+            string? placeError = await PlaceWorkingArchiveAsync(
+                archiveDest,
+                target.From,
+                target.To
+            );
+            tempArchive = null;
+            if (placeError is not null)
+                return $"Trim succeeded but {placeError}";
 
             ScannedRom updatedRom = game.ScannedRom! with
             {
@@ -1305,13 +1346,8 @@ public partial class MainWindowVM : VMBase
             if (truncateResult.IsFailed)
                 return $"{Path.GetFileName(target.Value.From)}: {truncateResult.Errors[0].Message}";
 
-            bool samePath = target.Value.From.Equals(
-                target.Value.To,
-                StringComparison.OrdinalIgnoreCase
-            );
-            string archiveDest = samePath ? target.Value.To + ".romforge_tmp" : target.Value.To;
-            if (samePath)
-                tempArchive = archiveDest;
+            string archiveDest = NewWorkingArchivePath(ArchiveFormat);
+            tempArchive = archiveDest;
 
             int fileBase = index * 100 / total;
             int fileRange = 100 / total;
@@ -1330,22 +1366,14 @@ public partial class MainWindowVM : VMBase
             if (compressResult.IsFailed)
                 return $"{Path.GetFileName(target.Value.From)}: {compressResult.Errors[0].Message}";
 
-            Result deleteResult = await _fileOperations.DeleteAsync(target.Value.From);
-            if (deleteResult.IsFailed)
-                return $"Trimmed but could not delete original: {Path.GetFileName(target.Value.From)}: {deleteResult.Errors[0].Message}";
-
-            if (samePath)
-            {
-                // The original is gone; the temp archive is now the only copy. Keep it on a
-                // rename failure for manual recovery rather than deleting it in the finally.
-                tempArchive = null;
-                var (_, isFailed, readOnlyList) = await _fileOperations.RenameAsync(
-                    archiveDest,
-                    target.Value.To
-                );
-                if (isFailed)
-                    return $"Trimmed but could not rename temp archive: {Path.GetFileName(target.Value.From)}: {readOnlyList[0].Message}";
-            }
+            string? placeError = await PlaceWorkingArchiveAsync(
+                archiveDest,
+                target.Value.From,
+                target.Value.To
+            );
+            tempArchive = null;
+            if (placeError is not null)
+                return $"{Path.GetFileName(target.Value.From)}: {placeError}";
 
             ScannedRom updatedRom = game.ScannedRom! with
             {
@@ -1693,6 +1721,34 @@ public partial class MainWindowVM : VMBase
             if (announceWhenCurrent)
                 await _notifier.NotifyErrorAsync($"Could not check for updates.\n{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// The running application's version, e.g. "1.2.0".
+    /// </summary>
+    public string AppVersion => _updateCheck.CurrentVersion;
+
+    /// <summary>
+    /// Version label for the status bar, e.g. "RomForge v1.2.0".
+    /// </summary>
+    public string AppVersionDisplay => $"RomForge v{_updateCheck.CurrentVersion}";
+
+    [RelayCommand]
+    private async Task OpenReleasesPageAsync() =>
+        await _urlLauncher.OpenUrlAsync(GitHubReleaseChecker.ReleasesPageUrl);
+
+    [RelayCommand]
+    private async Task ShowAboutAsync()
+    {
+        string message =
+            $"RomForge v{_updateCheck.CurrentVersion}\n"
+            + "A ROM collection manager: scan, verify against DATs, rename, trim and re-archive.\n\n"
+            + "© 2026 Ben de Bruijn\n"
+            + GitHubReleaseChecker.ReleasesPageUrl;
+
+        bool openReleases = await _notifier.ShowAboutAsync(message);
+        if (openReleases)
+            await _urlLauncher.OpenUrlAsync(GitHubReleaseChecker.ReleasesPageUrl);
     }
 
     [RelayCommand]
