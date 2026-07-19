@@ -799,11 +799,17 @@ public partial class MainWindowVM : VMBase
     /// <summary>
     /// Moves a freshly-compressed working archive into its final location, replacing the original
     /// for an in-place operation. Returns an error message on failure, or <see langword="null"/> on
-    /// success. If placement fails after the original has already been removed, the compressed
-    /// archive is preserved next to the destination (as "&lt;name&gt;.recovered") so the ROM is
-    /// never lost to the auto-swept temp directory.
+    /// success. The returned <c>Consumed</c> flag is <see langword="true"/> whenever the working
+    /// archive was moved somewhere (final destination or the recovery folder) and the caller no
+    /// longer owns it; it is <see langword="false"/> only when the working archive is still
+    /// sitting untouched at its original path (the original could not be deleted, so nothing was
+    /// attempted), so the caller's own cleanup is still responsible for it. If placement fails
+    /// after the original has already been removed, the compressed archive is moved to
+    /// <see cref="AppDataService.RecoveredPath"/> — never the destination directory again, since
+    /// that is the directory placement just failed against — so the ROM is never lost to the
+    /// auto-swept <see cref="AppDataService.TempPath"/>.
     /// </summary>
-    private async Task<string?> PlaceWorkingArchiveAsync(
+    private async Task<(string? Error, bool Consumed)> PlaceWorkingArchiveAsync(
         string workingArchive,
         string fromPath,
         string toPath
@@ -815,16 +821,24 @@ public partial class MainWindowVM : VMBase
         {
             Result deleteOriginal = await _fileOperations.DeleteAsync(fromPath);
             if (deleteOriginal.IsFailed)
-                return $"Could not replace original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}";
+                return (
+                    $"Could not replace original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}",
+                    false
+                );
         }
 
         Result move = await _fileOperations.RenameAsync(workingArchive, toPath);
         if (move.IsFailed)
         {
-            // For an in-place operation the original is already gone, so the working archive is
-            // the only remaining copy. Preserve it next to the destination instead of leaving it
-            // in the temp directory, which is swept on the next launch.
-            string recovery = toPath + ".recovered";
+            // The primary move failed, so the destination directory itself is the likely
+            // problem (offline volume, permissions, full disk). Recovering to a sibling path
+            // in that same directory would fail for the same reason, so recover into the app's
+            // own recovered/ folder instead — a location whose availability doesn't depend on
+            // the destination that just failed.
+            string recovery = Path.Combine(
+                _appData.RecoveredPath,
+                Path.GetFileName(workingArchive)
+            );
             Result fallback = await _fileOperations.RenameAsync(workingArchive, recovery);
             string kept = fallback.IsFailed ? workingArchive : recovery;
             _logger.Error(
@@ -832,17 +846,23 @@ public partial class MainWindowVM : VMBase
                 toPath,
                 kept
             );
-            return $"Archived but could not place it at {Path.GetFileName(toPath)} ({move.Errors[0].Message}). A copy was kept at:\n{kept}";
+            return (
+                $"Archived but could not place it at {Path.GetFileName(toPath)} ({move.Errors[0].Message}). A copy was kept at:\n{kept}",
+                true
+            );
         }
 
         if (!sameFile)
         {
             Result deleteOriginal = await _fileOperations.DeleteAsync(fromPath);
             if (deleteOriginal.IsFailed)
-                return $"Archived but could not delete original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}";
+                return (
+                    $"Archived but could not delete original: {Path.GetFileName(fromPath)}: {deleteOriginal.Errors[0].Message}",
+                    true
+                );
         }
 
-        return null;
+        return (null, true);
     }
 
     private async Task<(MatchResult? Updated, string? Error)> ReArchiveFileAsync(
@@ -890,14 +910,16 @@ public partial class MainWindowVM : VMBase
                     $"{Path.GetFileName(target.From)}: {compressResult.Errors[0].Message}"
                 );
 
-            string? placeError = await PlaceWorkingArchiveAsync(
+            (string? placeError, bool consumed) = await PlaceWorkingArchiveAsync(
                 compressTarget,
                 target.From,
                 target.To
             );
-            // The working archive has now been moved into place or intentionally preserved;
-            // either way the finally must not delete it.
-            tempArchive = null;
+            // Only clear tempArchive once PlaceWorkingArchiveAsync has actually taken ownership
+            // of it (moved to the destination or the recovery folder). If it's still untouched,
+            // leave it set so the finally block cleans it up immediately.
+            if (consumed)
+                tempArchive = null;
             if (placeError is not null)
                 return (null, $"{Path.GetFileName(target.From)}: {placeError}");
 
@@ -1189,12 +1211,13 @@ public partial class MainWindowVM : VMBase
             if (compressResult.IsFailed)
                 return $"Compression failed.\n{compressResult.Errors[0].Message}";
 
-            string? placeError = await PlaceWorkingArchiveAsync(
+            (string? placeError, bool consumed) = await PlaceWorkingArchiveAsync(
                 archiveDest,
                 target.From,
                 target.To
             );
-            tempArchive = null;
+            if (consumed)
+                tempArchive = null;
             if (placeError is not null)
                 return $"Trim succeeded but {placeError}";
 
@@ -1366,12 +1389,13 @@ public partial class MainWindowVM : VMBase
             if (compressResult.IsFailed)
                 return $"{Path.GetFileName(target.Value.From)}: {compressResult.Errors[0].Message}";
 
-            string? placeError = await PlaceWorkingArchiveAsync(
+            (string? placeError, bool consumed) = await PlaceWorkingArchiveAsync(
                 archiveDest,
                 target.Value.From,
                 target.Value.To
             );
-            tempArchive = null;
+            if (consumed)
+                tempArchive = null;
             if (placeError is not null)
                 return $"{Path.GetFileName(target.Value.From)}: {placeError}";
 

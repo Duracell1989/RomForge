@@ -18,6 +18,14 @@ public sealed class AppDataService
     public string ConfigPath { get; }
     public string CachesPath { get; }
     public string TempPath { get; }
+
+    /// <summary>
+    /// Holds working archives that could not be placed at their final destination and could not
+    /// be moved back next to it either (e.g. the destination volume went offline mid-operation).
+    /// Unlike <see cref="TempPath"/>, this directory is never swept, so a file placed here survives
+    /// until the user manually recovers it.
+    /// </summary>
+    public string RecoveredPath { get; }
     public string StatusDbPath { get; }
 
     public AppDataService()
@@ -36,6 +44,7 @@ public sealed class AppDataService
         ConfigPath = Path.Combine(RootPath, "config");
         CachesPath = Path.Combine(RootPath, "caches");
         TempPath = Path.Combine(RootPath, "temp");
+        RecoveredPath = Path.Combine(RootPath, "recovered");
         StatusDbPath = Path.Combine(RootPath, "status.db");
 
         Directory.CreateDirectory(DatsPath);
@@ -43,6 +52,7 @@ public sealed class AppDataService
         Directory.CreateDirectory(ConfigPath);
         Directory.CreateDirectory(CachesPath);
         Directory.CreateDirectory(TempPath);
+        Directory.CreateDirectory(RecoveredPath);
 
         CleanTemp();
     }

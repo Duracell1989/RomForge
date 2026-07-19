@@ -31,6 +31,7 @@ public sealed class AppDataServiceTests
         Directory.Exists(svc.ConfigPath).Should().BeTrue();
         Directory.Exists(svc.CachesPath).Should().BeTrue();
         Directory.Exists(svc.TempPath).Should().BeTrue();
+        Directory.Exists(svc.RecoveredPath).Should().BeTrue();
     }
 
     [Test]
@@ -43,6 +44,21 @@ public sealed class AppDataServiceTests
         _ = new AppDataService(_tempDir);
 
         File.Exists(orphan).Should().BeFalse();
+    }
+
+    [Test]
+    public void Constructor_DoesNotSweepRecoveredFiles()
+    {
+        // Unlike TempPath, RecoveredPath holds working archives a user still needs to manually
+        // rescue after a failed placement — CleanTemp() must never touch it, otherwise a "kept"
+        // recovery message becomes a lie the moment the app is relaunched.
+        AppDataService first = new AppDataService(_tempDir);
+        string recovered = Path.Combine(first.RecoveredPath, "rearchive-leftover.7z");
+        File.WriteAllText(recovered, "kept");
+
+        _ = new AppDataService(_tempDir);
+
+        File.Exists(recovered).Should().BeTrue();
     }
 
     [Test]

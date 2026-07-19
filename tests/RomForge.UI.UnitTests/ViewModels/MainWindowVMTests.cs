@@ -1846,6 +1846,113 @@ public sealed class MainWindowVMTests
     }
 
     [Test]
+    public async Task ReArchiveSelectedAsync_WhenPrimaryPlacementFails_RecoversToNonSweptFolder()
+    {
+        // The primary move into the ROM folder fails (e.g. the volume went offline mid-op). The
+        // fallback must not retry a sibling path in that same now-unreachable directory - it must
+        // land in AppDataService.RecoveredPath, which (unlike TempPath) is never swept on the next
+        // launch, so the recovered archive actually survives to be manually rescued.
+        string recoveredDir = Path.Combine(_tempDir, "recovered");
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .ReturnsAsync(Result.Ok());
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted.rom"));
+        _fileOps.Setup(f => f.DeleteAsync(It.IsAny<string>())).ReturnsAsync(Result.Ok());
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), "/roms/Test.7z"))
+            .ReturnsAsync(Result.Fail("volume offline"));
+        _fileOps
+            .Setup(f =>
+                f.RenameAsync(It.IsAny<string>(), It.Is<string>(p => p.StartsWith(recoveredDir)))
+            )
+            .ReturnsAsync(Result.Ok());
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.7z", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        _fileOps.Verify(
+            f => f.RenameAsync(It.IsAny<string>(), It.Is<string>(p => p.StartsWith(recoveredDir))),
+            Times.Once
+        );
+        _notifier.Verify(
+            n =>
+                n.NotifyErrorAsync(
+                    It.Is<string>(s => s.Contains("A copy was kept at") && s.Contains(recoveredDir))
+                ),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenSameFileAndDeleteOriginalFails_CleansUpWorkingArchiveImmediately()
+    {
+        // If the original can't be deleted, PlaceWorkingArchiveAsync never touches the working
+        // archive - it's still sitting untouched at its temp path. The finally block must still
+        // clean it up in this same call rather than leaving it for the next launch's temp sweep.
+        string? workingArchive = null;
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                (_, dest, _, _, _, _) =>
+                {
+                    workingArchive = dest;
+                    File.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+                }
+            )
+            .ReturnsAsync(Result.Ok());
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted.rom"));
+        _fileOps
+            .Setup(f => f.DeleteAsync(It.IsAny<string>()))
+            .ReturnsAsync(Result.Fail("delete failed"));
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.7z", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        workingArchive.Should().StartWith(Path.Combine(_tempDir, "temp"));
+        _fileOps.Verify(f => f.DeleteAsync(workingArchive!), Times.Once);
+    }
+
+    [Test]
     public async Task ReArchiveSelectedAsync_WhenOperationThrowsUnexpectedly_NotifiesError()
     {
         // A non-cancellation exception thrown mid-operation must be caught and
@@ -2339,20 +2446,20 @@ public sealed class MainWindowVMTests
     [NonParallelizable]
     public async Task LoadManagedDatsAsync_WhenRomFolderOffline_PreservesVerifiedResults()
     {
-        // Simulates the ROM drive being unmounted: the whole containing directory is gone.
-        // The verified result must be preserved (not overwritten with Missing), otherwise
-        // reconnecting the drive forces a full re-scan.
+        // Simulates the ROM drive being unmounted: the DAT's configured ROM folder (persisted by
+        // ScanFolderAsync alongside every scan, same as real usage) is unavailable. The verified
+        // result must be preserved (not overwritten with Missing), otherwise reconnecting the
+        // drive forces a full re-scan. Offline detection lives at this VM layer (ValidateIntegrityAsync
+        // checking the DAT's root folder) rather than in RomIntegrityChecker, which only ever sees
+        // individual file paths and can't distinguish "drive offline" from "subfolder deleted".
         ILogger logger = new LoggerConfiguration().CreateLogger();
         AppDataService appData = new AppDataService(_tempDir);
         ScanResultStore store = new ScanResultStore(appData, logger);
         await store.InitializeAsync();
 
         string datName = "Offline DAT";
-        string offlinePath = Path.Combine(
-            _tempDir,
-            "offline_volume_" + Path.GetRandomFileName(),
-            "mario.gba"
-        );
+        string offlineRoot = Path.Combine(_tempDir, "offline_volume_" + Path.GetRandomFileName());
+        string offlinePath = Path.Combine(offlineRoot, "mario.gba");
         Game game = new Game { ReleaseNumber = 1, Title = "Mario" };
         MatchResult verified = new MatchResult
         {
@@ -2361,6 +2468,11 @@ public sealed class MainWindowVMTests
             ScannedRom = new ScannedRom { FilePath = offlinePath },
         };
         await store.SaveResultsAsync(datName, [verified]);
+
+        DatConfigService configService = new DatConfigService(appData, logger);
+        await configService.UpdateRomFolderAsync(datName, offlineRoot);
+        // _fileOps.DirectoryExists defaults to false for any unconfigured path (Moq default),
+        // which is exactly the "offline volume" state this test simulates for offlineRoot.
 
         DatFile datFile = new DatFile
         {

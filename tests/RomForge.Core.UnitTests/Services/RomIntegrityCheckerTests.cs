@@ -54,11 +54,13 @@ public sealed class RomIntegrityCheckerTests
     }
 
     [Test]
-    public void FindStaleResults_FileMissingAndParentDirMissing_NotStale()
+    public void FindStaleResults_FileMissingAndParentDirMissing_ReturnsStaleResult()
     {
-        // Simulates an unmounted external volume: the file is gone only because its
-        // whole containing directory is gone. This must NOT be reported as stale,
-        // otherwise the caller wipes good scan results when the drive is offline.
+        // A missing containing directory is no longer special-cased here: the offline-volume
+        // guard now lives one layer up (MainWindowVM.ValidateIntegrityAsync, keyed off the DAT's
+        // actual configured ROM root), so a missing file is always reported regardless of whether
+        // its parent directory also happens to be gone — otherwise a genuinely deleted subfolder
+        // of ROMs would be permanently invisible to this check.
         string offlinePath = Path.Combine(
             Path.GetTempPath(),
             "romforge_offline_volume_" + System.Guid.NewGuid().ToString("N"),
@@ -78,7 +80,8 @@ public sealed class RomIntegrityCheckerTests
 
         IReadOnlyList<MatchResult> stale = RomIntegrityChecker.FindStaleResults(results);
 
-        stale.Should().BeEmpty();
+        stale.Should().HaveCount(1);
+        stale[0].Game.ReleaseNumber.Should().Be(1);
     }
 
     [Test]
