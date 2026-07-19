@@ -225,6 +225,44 @@ public sealed class MainWindowVMTests
     public void MoveUnverifiedLabel_OnConstruction_ShowsZeroCount() =>
         _vm.MoveUnverifiedLabel.Should().Be("Move Unverified (0)");
 
+    // --- Version / About ---
+
+    [Test]
+    public void AppVersion_ReflectsUpdateCheckServiceVersion() =>
+        _vm.AppVersion.Should().Be("1.0.0");
+
+    [Test]
+    public void AppVersionDisplay_ShowsPrefixedVersion() =>
+        _vm.AppVersionDisplay.Should().Be("RomForge v1.0.0");
+
+    [Test]
+    public async Task OpenReleasesPageCommand_OpensReleasesUrl()
+    {
+        await _vm.OpenReleasesPageCommand.ExecuteAsync(null);
+
+        _urlLauncher.Verify(u => u.OpenUrlAsync(GitHubReleaseChecker.ReleasesPageUrl), Times.Once);
+    }
+
+    [Test]
+    public async Task ShowAboutCommand_WhenUserChoosesGitHub_OpensReleasesUrl()
+    {
+        _notifier.Setup(n => n.ShowAboutAsync(It.IsAny<string>())).ReturnsAsync(true);
+
+        await _vm.ShowAboutCommand.ExecuteAsync(null);
+
+        _urlLauncher.Verify(u => u.OpenUrlAsync(GitHubReleaseChecker.ReleasesPageUrl), Times.Once);
+    }
+
+    [Test]
+    public async Task ShowAboutCommand_WhenUserDismisses_DoesNotOpenUrl()
+    {
+        _notifier.Setup(n => n.ShowAboutAsync(It.IsAny<string>())).ReturnsAsync(false);
+
+        await _vm.ShowAboutCommand.ExecuteAsync(null);
+
+        _urlLauncher.Verify(u => u.OpenUrlAsync(It.IsAny<string>()), Times.Never);
+    }
+
     // --- Computed label properties ---
 
     [Test]
@@ -1712,8 +1750,9 @@ public sealed class MainWindowVMTests
     [Test]
     public async Task ReArchiveSelectedAsync_WhenInPlaceSucceeds_SwapsTempArchiveIntoPlace()
     {
-        // In-place re-archive happy path: compress to the temp archive, delete the
-        // original, then rename the temp archive onto the final path.
+        // In-place re-archive happy path: compress to a working archive in the app temp
+        // directory (never inside the ROM folder), then move it onto the final path.
+        string? compressTarget = null;
         Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
         availableCompressor.Setup(c => c.IsAvailable).Returns(true);
         availableCompressor
@@ -1726,6 +1765,9 @@ public sealed class MainWindowVMTests
                     It.IsAny<string>(),
                     It.IsAny<CancellationToken>()
                 )
+            )
+            .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                (_, dest, _, _, _, _) => compressTarget = dest
             )
             .ReturnsAsync(Result.Ok());
         MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
@@ -1746,31 +1788,20 @@ public sealed class MainWindowVMTests
 
         await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
 
-        // Compression writes to the temp archive, never directly onto the original.
-        availableCompressor.Verify(
-            c =>
-                c.CompressAsync(
-                    It.IsAny<string>(),
-                    "/roms/Test.7z.romforge-tmp",
-                    It.IsAny<long>(),
-                    It.IsAny<IProgress<int>?>(),
-                    It.IsAny<string>(),
-                    It.IsAny<CancellationToken>()
-                ),
-            Times.Once
-        );
-        _fileOps.Verify(
-            f => f.RenameAsync("/roms/Test.7z.romforge-tmp", "/roms/Test.7z"),
-            Times.Once
-        );
+        // Compression writes to the app temp directory, never inside the ROM folder.
+        compressTarget.Should().StartWith(Path.Combine(_tempDir, "temp"));
+        compressTarget.Should().NotContain("/roms/");
+        // The working archive is then moved onto the final path.
+        _fileOps.Verify(f => f.RenameAsync(compressTarget!, "/roms/Test.7z"), Times.Once);
         _notifier.Verify(n => n.NotifyErrorAsync(It.IsAny<string>()), Times.Never);
     }
 
     [Test]
-    public async Task ReArchiveSelectedAsync_WhenInPlaceRenameFails_NotifiesError()
+    public async Task ReArchiveSelectedAsync_WhenInPlacePlacementFails_NotifiesError()
     {
-        // Original already deleted and the new archive sits at the temp path; the
-        // rename onto the final name fails, so the temp archive must be preserved.
+        // Original already deleted and the new archive sits in the working directory; the
+        // move onto the final name fails, so the compressed archive must be preserved and
+        // its location surfaced to the user.
         Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
         availableCompressor.Setup(c => c.IsAvailable).Returns(true);
         availableCompressor
@@ -1807,11 +1838,118 @@ public sealed class MainWindowVMTests
             n =>
                 n.NotifyErrorAsync(
                     It.Is<string>(s =>
-                        s.Contains("could not restore final name") && s.Contains("rename failed")
+                        s.Contains("could not place it") && s.Contains("rename failed")
                     )
                 ),
             Times.Once
         );
+    }
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenPrimaryPlacementFails_RecoversToNonSweptFolder()
+    {
+        // The primary move into the ROM folder fails (e.g. the volume went offline mid-op). The
+        // fallback must not retry a sibling path in that same now-unreachable directory - it must
+        // land in AppDataService.RecoveredPath, which (unlike TempPath) is never swept on the next
+        // launch, so the recovered archive actually survives to be manually rescued.
+        string recoveredDir = Path.Combine(_tempDir, "recovered");
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .ReturnsAsync(Result.Ok());
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted.rom"));
+        _fileOps.Setup(f => f.DeleteAsync(It.IsAny<string>())).ReturnsAsync(Result.Ok());
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), "/roms/Test.7z"))
+            .ReturnsAsync(Result.Fail("volume offline"));
+        _fileOps
+            .Setup(f =>
+                f.RenameAsync(It.IsAny<string>(), It.Is<string>(p => p.StartsWith(recoveredDir)))
+            )
+            .ReturnsAsync(Result.Ok());
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.7z", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        _fileOps.Verify(
+            f => f.RenameAsync(It.IsAny<string>(), It.Is<string>(p => p.StartsWith(recoveredDir))),
+            Times.Once
+        );
+        _notifier.Verify(
+            n =>
+                n.NotifyErrorAsync(
+                    It.Is<string>(s => s.Contains("A copy was kept at") && s.Contains(recoveredDir))
+                ),
+            Times.Once
+        );
+    }
+
+    [Test]
+    public async Task ReArchiveSelectedAsync_WhenSameFileAndDeleteOriginalFails_CleansUpWorkingArchiveImmediately()
+    {
+        // If the original can't be deleted, PlaceWorkingArchiveAsync never touches the working
+        // archive - it's still sitting untouched at its temp path. The finally block must still
+        // clean it up in this same call rather than leaving it for the next launch's temp sweep.
+        string? workingArchive = null;
+        Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
+        availableCompressor.Setup(c => c.IsAvailable).Returns(true);
+        availableCompressor
+            .Setup(c =>
+                c.CompressAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<long>(),
+                    It.IsAny<IProgress<int>?>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()
+                )
+            )
+            .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                (_, dest, _, _, _, _) =>
+                {
+                    workingArchive = dest;
+                    File.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+                }
+            )
+            .ReturnsAsync(Result.Ok());
+        MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
+
+        _extractor
+            .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Ok("/tmp/no_such_extracted.rom"));
+        _fileOps
+            .Setup(f => f.DeleteAsync(It.IsAny<string>()))
+            .ReturnsAsync(Result.Fail("delete failed"));
+
+        LoadedDatVM datVm = MakeDatVM();
+        GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.7z", wrongArchiveType: true);
+        datVm.Games.Add(gameRow);
+        vm.ActiveDat = datVm;
+        vm.SelectedGame = gameRow;
+
+        await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
+
+        workingArchive.Should().StartWith(Path.Combine(_tempDir, "temp"));
+        _fileOps.Verify(f => f.DeleteAsync(workingArchive!), Times.Once);
     }
 
     [Test]
@@ -1858,17 +1996,16 @@ public sealed class MainWindowVMTests
     [Test]
     public async Task ReArchiveSelectedAsync_WhenInPlaceCompressFails_CleansUpLeftoverTempArchive()
     {
-        // In-place re-archive whose temp archive was partially written before the
-        // compress failed: the finally block must delete the leftover temp file
-        // while leaving the still-intact original untouched.
+        // In-place re-archive whose working archive was partially written before the compress
+        // failed: the finally block must delete the leftover working file (in the app temp
+        // directory) while leaving the still-intact original untouched.
         string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
             string original = Path.Combine(dir, "Test.7z");
-            string tempArchive = original + ".romforge-tmp";
-            await File.WriteAllBytesAsync(tempArchive, new byte[] { 1, 2, 3 });
 
+            string? workingArchive = null;
             Mock<IArchiveCompressor> availableCompressor = new Mock<IArchiveCompressor>();
             availableCompressor.Setup(c => c.IsAvailable).Returns(true);
             availableCompressor
@@ -1881,6 +2018,14 @@ public sealed class MainWindowVMTests
                         It.IsAny<string>(),
                         It.IsAny<CancellationToken>()
                     )
+                )
+                // Simulate a partially-written working archive left behind by the failed compress.
+                .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                    (_, dest, _, _, _, _) =>
+                    {
+                        workingArchive = dest;
+                        File.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+                    }
                 )
                 .ReturnsAsync(Result.Fail("compression failed"));
             MainWindowVM vm = MakeVM(compressorMock: availableCompressor);
@@ -1910,7 +2055,8 @@ public sealed class MainWindowVMTests
 
             await vm.ReArchiveSelectedCommand.ExecuteAsync(null);
 
-            _fileOps.Verify(f => f.DeleteAsync(tempArchive), Times.Once);
+            workingArchive.Should().StartWith(Path.Combine(_tempDir, "temp"));
+            _fileOps.Verify(f => f.DeleteAsync(workingArchive!), Times.Once);
             _fileOps.Verify(f => f.DeleteAsync(original), Times.Never);
         }
         finally
@@ -2011,16 +2157,15 @@ public sealed class MainWindowVMTests
     [Test]
     public async Task TrimSelectedAsync_WhenInPlaceCompressFails_CleansUpLeftoverTempArchive()
     {
-        // A failed in-place trim wrote to a temp archive; the finally block must delete
-        // that leftover, mirroring the re-archive cleanup, not leave a .romforge_tmp behind.
+        // A failed in-place trim wrote to a working archive; the finally block must delete
+        // that leftover (in the app temp directory), mirroring the re-archive cleanup.
         string dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         try
         {
             string original = Path.Combine(dir, "Test.7z");
-            string tempArchive = original + ".romforge_tmp";
-            await File.WriteAllBytesAsync(tempArchive, new byte[] { 1, 2, 3 });
 
+            string? workingArchive = null;
             _compressor.Setup(c => c.IsAvailable).Returns(true);
             _compressor
                 .Setup(c =>
@@ -2032,6 +2177,13 @@ public sealed class MainWindowVMTests
                         It.IsAny<string>(),
                         It.IsAny<CancellationToken>()
                     )
+                )
+                .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                    (_, dest, _, _, _, _) =>
+                    {
+                        workingArchive = dest;
+                        File.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+                    }
                 )
                 .ReturnsAsync(Result.Fail("compress failed"));
             _extractor
@@ -2051,7 +2203,8 @@ public sealed class MainWindowVMTests
 
             await _vm.TrimSelectedCommand.ExecuteAsync(null);
 
-            _fileOps.Verify(f => f.DeleteAsync(tempArchive), Times.Once);
+            workingArchive.Should().StartWith(Path.Combine(_tempDir, "temp"));
+            _fileOps.Verify(f => f.DeleteAsync(workingArchive!), Times.Once);
             _fileOps.Verify(f => f.DeleteAsync(original), Times.Never);
         }
         finally
@@ -2068,9 +2221,8 @@ public sealed class MainWindowVMTests
         try
         {
             string original = Path.Combine(dir, "Test.7z");
-            string tempArchive = original + ".romforge_tmp";
-            await File.WriteAllBytesAsync(tempArchive, new byte[] { 1, 2, 3 });
 
+            string? workingArchive = null;
             _compressor.Setup(c => c.IsAvailable).Returns(true);
             _compressor
                 .Setup(c =>
@@ -2082,6 +2234,13 @@ public sealed class MainWindowVMTests
                         It.IsAny<string>(),
                         It.IsAny<CancellationToken>()
                     )
+                )
+                .Callback<string, string, long, IProgress<int>?, string, CancellationToken>(
+                    (_, dest, _, _, _, _) =>
+                    {
+                        workingArchive = dest;
+                        File.WriteAllBytes(dest, new byte[] { 1, 2, 3 });
+                    }
                 )
                 .ReturnsAsync(Result.Fail("compress failed"));
             _extractor
@@ -2108,7 +2267,8 @@ public sealed class MainWindowVMTests
 
             await _vm.TrimAllCommand.ExecuteAsync(null);
 
-            _fileOps.Verify(f => f.DeleteAsync(tempArchive), Times.Once);
+            workingArchive.Should().StartWith(Path.Combine(_tempDir, "temp"));
+            _fileOps.Verify(f => f.DeleteAsync(workingArchive!), Times.Once);
             _fileOps.Verify(f => f.DeleteAsync(original), Times.Never);
         }
         finally
@@ -2144,6 +2304,9 @@ public sealed class MainWindowVMTests
         _fileOps
             .Setup(f => f.DeleteAsync(It.IsAny<string>()))
             .ReturnsAsync(Result.Fail("delete failed"));
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(Result.Ok());
 
         LoadedDatVM datVm = MakeDatVM();
         GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true);
@@ -2222,6 +2385,9 @@ public sealed class MainWindowVMTests
             .Setup(e => e.ExtractToTempFileAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result.Ok("/tmp/no_such_extracted_file.rom"));
         _fileOps.Setup(f => f.DeleteAsync(It.IsAny<string>())).ReturnsAsync(Result.Ok());
+        _fileOps
+            .Setup(f => f.RenameAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(Result.Ok());
 
         LoadedDatVM datVm = MakeDatVM();
         GameRowVM gameRow = MakeGameRowWithScannedRom("/roms/Test.zip", wrongArchiveType: true);
@@ -2246,12 +2412,16 @@ public sealed class MainWindowVMTests
         await store.InitializeAsync();
 
         string datName = "Stale DAT";
+        // The ROM folder exists but the file inside it is gone: a genuine deletion, not an
+        // offline volume, so it must be cleared to Missing.
+        string romFolder = Path.Combine(_tempDir, "roms");
+        Directory.CreateDirectory(romFolder);
         Game game = new Game { ReleaseNumber = 1, Title = "Mario" };
         MatchResult staleResult = new MatchResult
         {
             Game = game,
             Status = MatchStatus.Verified,
-            ScannedRom = new ScannedRom { FilePath = "/nonexistent/mario.gba" },
+            ScannedRom = new ScannedRom { FilePath = Path.Combine(romFolder, "mario.gba") },
         };
         await store.SaveResultsAsync(datName, [staleResult]);
 
@@ -2270,5 +2440,52 @@ public sealed class MainWindowVMTests
         await Task.Delay(500);
 
         _vm.ActiveDat!.Games[0].Status.Should().Be(MatchStatus.Missing);
+    }
+
+    [Test]
+    [NonParallelizable]
+    public async Task LoadManagedDatsAsync_WhenRomFolderOffline_PreservesVerifiedResults()
+    {
+        // Simulates the ROM drive being unmounted: the DAT's configured ROM folder (persisted by
+        // ScanFolderAsync alongside every scan, same as real usage) is unavailable. The verified
+        // result must be preserved (not overwritten with Missing), otherwise reconnecting the
+        // drive forces a full re-scan. Offline detection lives at this VM layer (ValidateIntegrityAsync
+        // checking the DAT's root folder) rather than in RomIntegrityChecker, which only ever sees
+        // individual file paths and can't distinguish "drive offline" from "subfolder deleted".
+        ILogger logger = new LoggerConfiguration().CreateLogger();
+        AppDataService appData = new AppDataService(_tempDir);
+        ScanResultStore store = new ScanResultStore(appData, logger);
+        await store.InitializeAsync();
+
+        string datName = "Offline DAT";
+        string offlineRoot = Path.Combine(_tempDir, "offline_volume_" + Path.GetRandomFileName());
+        string offlinePath = Path.Combine(offlineRoot, "mario.gba");
+        Game game = new Game { ReleaseNumber = 1, Title = "Mario" };
+        MatchResult verified = new MatchResult
+        {
+            Game = game,
+            Status = MatchStatus.Verified,
+            ScannedRom = new ScannedRom { FilePath = offlinePath },
+        };
+        await store.SaveResultsAsync(datName, [verified]);
+
+        DatConfigService configService = new DatConfigService(appData, logger);
+        await configService.UpdateRomFolderAsync(datName, offlineRoot);
+        // _fileOps.DirectoryExists defaults to false for any unconfigured path (Moq default),
+        // which is exactly the "offline volume" state this test simulates for offlineRoot.
+
+        DatFile datFile = new DatFile
+        {
+            Header = new DatHeader { DatName = datName, System = "GBA" },
+            Games = [game],
+        };
+        string fakeXml = Path.Combine(_tempDir, "dats", "offline.xml");
+        await File.WriteAllTextAsync(fakeXml, "<dummy/>");
+        _datReader.Setup(r => r.ReadAsync()).ReturnsAsync(Result.Ok(datFile));
+
+        await _vm.LoadManagedDatsAsync();
+        await Task.Delay(500);
+
+        _vm.ActiveDat!.Games[0].Status.Should().Be(MatchStatus.Verified);
     }
 }

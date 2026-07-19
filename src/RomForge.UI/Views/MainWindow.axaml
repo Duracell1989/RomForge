@@ -106,7 +106,29 @@ xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         <Border DockPanel.Dock="Bottom"
                 BorderThickness="0,1,0,0"
                 Padding="8,3">
-            <TextBlock Text="{Binding StatusSummary}" FontSize="12"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusSummary}"
+                           FontSize="12"
+                           VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="6"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="{Binding AppVersionDisplay}"
+                               FontSize="12"
+                               Opacity="0.6"
+                               VerticalAlignment="Center"/>
+                    <Button Command="{Binding OpenReleasesPageCommand}"
+                            Content="GitHub ↗"
+                            ToolTip.Tip="Open the RomForge releases page"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="2,0"
+                            FontSize="12"
+                            Cursor="Hand"/>
+                </StackPanel>
+            </Grid>
         </Border>
 
         <!-- Main body: full-width content area -->

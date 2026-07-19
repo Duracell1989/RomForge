@@ -40,7 +40,41 @@ public sealed class RomIntegrityCheckerTests
             {
                 Game = new Game { ReleaseNumber = 1 },
                 Status = MatchStatus.Verified,
-                ScannedRom = new ScannedRom { FilePath = Path.Combine(Path.GetTempPath(), "romforge_nonexistent_test.zip") },
+                ScannedRom = new ScannedRom
+                {
+                    FilePath = Path.Combine(Path.GetTempPath(), "romforge_nonexistent_test.zip"),
+                },
+            },
+        ];
+
+        IReadOnlyList<MatchResult> stale = RomIntegrityChecker.FindStaleResults(results);
+
+        stale.Should().HaveCount(1);
+        stale[0].Game.ReleaseNumber.Should().Be(1);
+    }
+
+    [Test]
+    public void FindStaleResults_FileMissingAndParentDirMissing_ReturnsStaleResult()
+    {
+        // A missing containing directory is no longer special-cased here: the offline-volume
+        // guard now lives one layer up (MainWindowVM.ValidateIntegrityAsync, keyed off the DAT's
+        // actual configured ROM root), so a missing file is always reported regardless of whether
+        // its parent directory also happens to be gone — otherwise a genuinely deleted subfolder
+        // of ROMs would be permanently invisible to this check.
+        string offlinePath = Path.Combine(
+            Path.GetTempPath(),
+            "romforge_offline_volume_" + System.Guid.NewGuid().ToString("N"),
+            "roms",
+            "game.7z"
+        );
+
+        IReadOnlyList<MatchResult> results =
+        [
+            new MatchResult
+            {
+                Game = new Game { ReleaseNumber = 1 },
+                Status = MatchStatus.Verified,
+                ScannedRom = new ScannedRom { FilePath = offlinePath },
             },
         ];
 

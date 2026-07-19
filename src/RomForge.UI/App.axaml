@@ -42,6 +42,8 @@
                 <NativeMenuItem.Menu>
                     <NativeMenu>
                         <NativeMenuItem Header="Check for Updates…" Command="{Binding CheckForUpdatesCommand}"/>
+                        <NativeMenuItemSeparator/>
+                        <NativeMenuItem Header="About RomForge…" Command="{Binding ShowAboutCommand}"/>
                     </NativeMenu>
                 </NativeMenuItem.Menu>
             </NativeMenuItem>

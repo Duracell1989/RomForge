@@ -26,6 +26,11 @@ public sealed class UpdateCheckService
         _currentVersion = currentVersion;
     }
 
+    /// <summary>
+    /// The running application's version (e.g. "1.2.0"), as reported to the update check.
+    /// </summary>
+    public string CurrentVersion => _currentVersion;
+
     public async Task<UpdateCheckOutcome> CheckAsync(CancellationToken ct = default)
     {
         Result<ReleaseInfo> result = await _releaseChecker.FetchLatestReleaseAsync(ct);
